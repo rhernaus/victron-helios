@@ -4,6 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import model_validator
 
 
 class HeliosSettings(BaseSettings):
@@ -53,6 +54,22 @@ class HeliosSettings(BaseSettings):
         data.pop("openweather_api_key", None)
         return data
 
+    @model_validator(mode="after")
+    def _validate_invariants(self) -> "HeliosSettings":
+        # Recalc interval must be <= planning window
+        if self.recalculation_interval_seconds > self.planning_window_seconds:
+            raise ValueError(
+                "recalculation_interval_seconds must be <= planning_window_seconds"
+            )
+        # SoC bounds sanity
+        if not (0 <= self.min_soc_percent <= self.max_soc_percent <= 100):
+            raise ValueError("SoC bounds must satisfy 0 <= min <= max <= 100")
+        if not (self.min_soc_percent <= self.reserve_soc_percent <= self.max_soc_percent):
+            raise ValueError(
+                "reserve_soc_percent must be between min_soc_percent and max_soc_percent"
+            )
+        return self
+
 
 class ConfigUpdate(BaseModel):
     planning_window_seconds: Optional[int] = None
@@ -82,7 +99,10 @@ class ConfigUpdate(BaseModel):
     openweather_api_key: Optional[str] = None
 
     def apply_to(self, settings: HeliosSettings) -> HeliosSettings:
+        """Return a new validated settings instance with the updates applied atomically."""
         updates = {k: v for k, v in self.model_dump().items() if v is not None}
-        for key, value in updates.items():
-            setattr(settings, key, value)
-        return settings
+        # Build a new settings object to avoid transient invalid states during setattr
+        current = settings.model_dump()
+        current.update(updates)
+        new_settings = HeliosSettings.model_validate(current)
+        return new_settings

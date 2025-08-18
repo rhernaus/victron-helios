@@ -56,7 +56,7 @@ class Planner:
         # Simple heuristic:
         # - If grid sell enabled and price is high => export at max allowed; else idle
         # - If price is low => import/charge at max allowed
-        # In all cases obey configured grid limits
+        # In all cases obey configured grid limits and use settings-defined limits rather than hard-coded values
         import_limit = self.settings.grid_import_limit_w or 0
         export_limit = self.settings.grid_export_limit_w or 0
 
@@ -69,10 +69,11 @@ class Planner:
 
         if cheap and import_limit > 0:
             action = Action.CHARGE_FROM_GRID
-            setpoint = min(import_limit, 1000) if import_limit else 0
+            # Use configured limit; planner may later incorporate battery charge limit and pricing formulas
+            setpoint = import_limit
         elif self.settings.grid_sell_enabled and expensive and export_limit > 0:
             action = Action.EXPORT_TO_GRID
-            setpoint = -min(export_limit, 1000) if export_limit else 0
+            setpoint = -export_limit
 
         return action, setpoint
 

@@ -7,6 +7,7 @@
   - Enforce battery operational strategy: min/max SoC and self-consumption reserve vs arbitrage window
   - Add ramping/hysteresis to prevent oscillations and honor minimum dwell times for actions
   - Respect grid import/export caps and battery charge/discharge power limits in planning and execution
+  - Enforce configuration invariants at runtime (already applied for recalc <= planning window and SoC bounds)
 
 - **Victron GX (D-Bus) integration**
   - Implement robust D-Bus client: read telemetry (PV, grid, battery, load), write grid setpoint
@@ -46,6 +47,7 @@
 - **Persistence & storage**
   - Persist configuration (including secrets) securely on device
   - Store time-series telemetry and plan history for analytics and model training
+  - Implement `.env`/YAML config writer and load-on-start; avoid returning secrets via API
 
 - **Scheduling & orchestration**
   - Dynamic reschedule when configuration changes
@@ -59,6 +61,7 @@
 - **Observability**
   - Structured logging with redaction
   - Metrics endpoint (Prometheus) for control loop timing, plan quality, API latency
+  - Request/response access logs with sensitive field filtering
 
 - **Packaging & deployment**
   - Build/install instructions for Venus OS (GX): dependencies, service unit/supervisor, autostart
@@ -68,8 +71,10 @@
   - Unit tests for planner, providers, and config logic
   - Integration tests with simulated D-Bus and recorded traces
   - Scenario-based simulation harness for end-to-end validation
+  - Add pytest/coverage and a CI test job
 
 - **Documentation**
   - User guide for configuration and UI
   - Provider setup (Tibber, weather APIs, EV APIs)
   - Architecture and extension points (modular providers, forecast engines)
+  - Expand README with quickstart, API docs, and environment variables (added)

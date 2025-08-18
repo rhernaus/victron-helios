@@ -19,3 +19,22 @@ ignore = ["UP007"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 20
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "helios-gx"
+version = "0.1.0"
+description = "Helios: Advanced Dynamic Energy Management for Victron GX"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+[tool.setuptools]
+zip-safe = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["helios*"]

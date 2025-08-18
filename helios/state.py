@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
+from threading import RLock
 
 from .config import HeliosSettings
 from .models import Plan
@@ -19,6 +20,7 @@ class HeliosState:
     last_recalc_at: Optional[datetime] = None
     last_control_at: Optional[datetime] = None
     automation_paused: bool = False
+    lock: RLock = field(default_factory=RLock)
 
 
 _global_state: Optional[HeliosState] = None
