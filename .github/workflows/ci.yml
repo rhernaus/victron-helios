@@ -35,8 +35,7 @@ jobs:
       - name: Black Format Check
         run: black --check --diff .
 
-      - name: isort Import Order Check
-        run: isort --check-only --diff .
+      # isort removed to avoid conflicts; ruff/black enforce formatting
 
       - name: MyPy Type Check
         run: mypy helios
