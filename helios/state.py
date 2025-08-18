@@ -9,6 +9,7 @@ from .config import HeliosSettings
 from .dwell import DwellController
 from .executor import Executor
 from .models import Plan
+from .providers import PriceProvider
 
 
 @dataclass
@@ -17,6 +18,7 @@ class HeliosState:
     scheduler: Optional[object] = None
     planner: Optional[object] = None
     executor: Optional[Executor] = None
+    price_provider: Optional[PriceProvider] = None
 
     latest_plan: Optional[Plan] = None
     last_recalc_at: Optional[datetime] = None
@@ -34,3 +36,9 @@ def get_state() -> HeliosState:
     if _global_state is None:
         _global_state = HeliosState(settings=HeliosSettings())
     return _global_state
+
+
+def _reset_state_for_testing() -> None:
+    """Reset global state singleton. For test usage only."""
+    global _global_state
+    _global_state = None

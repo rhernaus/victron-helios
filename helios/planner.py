@@ -19,7 +19,7 @@ class Planner:
     ) -> Plan:
         now = now or datetime.now(timezone.utc)
         window = self.settings.planning_window_seconds
-        horizon_hours = 24
+        horizon_hours = self.settings.planning_horizon_hours
         generated_at = now
 
         # Build time slices

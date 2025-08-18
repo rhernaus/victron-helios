@@ -11,10 +11,19 @@ Current endpoints:
 - `POST /resume`: resume automation
 - `GET /metrics`: Prometheus metrics
 
-### Provider and Executor selection
+### Configuration
 
-- Price provider: set `HELIOS_PRICE_PROVIDER` to `stub` (default) or `tibber`.
-- Executor backend: set `HELIOS_EXECUTOR_BACKEND` to `noop` (default) or `dbus` (TBD).
+- Planning & cadence:
+  - `HELIOS_PLANNING_WINDOW_SECONDS`: slot size for the plan (default 900).
+  - `HELIOS_PLANNING_HORIZON_HOURS`: planning horizon hours (default 24, 1–48 allowed).
+  - `HELIOS_RECALCULATION_INTERVAL_SECONDS`: plan refresh cadence (must be <= window).
+  - `HELIOS_DBUS_UPDATE_INTERVAL_SECONDS`: control loop cadence.
+- Provider selection:
+  - `HELIOS_PRICE_PROVIDER`: `stub` (default) or `tibber`.
+  - For Tibber: set `HELIOS_TIBBER_TOKEN`. The provider performs lightweight caching and retries.
+- Executor backend: `HELIOS_EXECUTOR_BACKEND` = `noop` (default) or `dbus` (stub implementation in progress).
 - Dwell/hysteresis:
   - `HELIOS_MINIMUM_ACTION_DWELL_SECONDS`: minimum time before switching actions.
   - `HELIOS_PRICE_HYSTERESIS_EUR_PER_KWH`: widening around the pivot price to reduce flapping.
+
+Settings can be updated at runtime via `PUT /config` and are also loadable via environment variables (`HELIOS_` prefix). Secret fields are redacted from `GET /config` responses.

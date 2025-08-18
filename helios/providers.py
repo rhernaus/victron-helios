@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import httpx
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 
 class PriceProvider(ABC):
@@ -59,7 +60,41 @@ class StubPriceProvider(PriceProvider):
 @dataclass
 class TibberPriceProvider(PriceProvider):
     access_token: str
+    _cache: dict[str, tuple[datetime, list[tuple[datetime, float]]]] | None = None
 
+    def __post_init__(self) -> None:  # dataclass post-init
+        if self._cache is None:
+            self._cache = {}
+
+    def _cache_key(self) -> str:
+        return "prices_today_tomorrow"
+
+    def _get_cached(self) -> list[tuple[datetime, float]] | None:
+        key = self._cache_key()
+        cache = self._cache or {}
+        entry = cache.get(key)
+        if not entry:
+            return None
+        expires_at, data = entry
+        # expire cache slightly after tomorrow midnight UTC
+        if datetime.now(timezone.utc) < expires_at:
+            return data
+        return None
+
+    def _set_cache(self, data: list[tuple[datetime, float]]) -> None:
+        # set expiry at next day 03:00 UTC to be safe
+        now = datetime.now(timezone.utc)
+        next_day = (now + timedelta(days=1)).replace(hour=3, minute=0, second=0, microsecond=0)
+        if self._cache is None:
+            self._cache = {}
+        self._cache[self._cache_key()] = (next_day, data)
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+        retry=retry_if_exception_type(httpx.HTTPError),
+    )
     def get_prices(self, start: datetime, end: datetime) -> list[tuple[datetime, float]]:
         # Minimal Tibber GraphQL query for current home prices
         # Note: In a full implementation, select the correct home and timezone handling.
@@ -81,34 +116,40 @@ class TibberPriceProvider(PriceProvider):
         }
         headers = {"Authorization": f"Bearer {self.access_token}"}
         url = "https://api.tibber.com/v1-beta/gql"
-        with httpx.Client(timeout=10) as client:
-            resp = client.post(url, json=query, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-        homes = data.get("data", {}).get("viewer", {}).get("homes", [])
-        if not homes:
-            return []
-        price_info = homes[0].get("currentSubscription", {}).get("priceInfo", {})
-        series = []
-        for section in (price_info.get("today", []) or []) + (price_info.get("tomorrow", []) or []):
-            starts_at = section.get("startsAt")
-            total = section.get("total")
-            if starts_at is None or total is None:
-                continue
-            try:
-                ts = datetime.fromisoformat(starts_at.replace("Z", "+00:00")).astimezone(
-                    timezone.utc
-                )
-            except Exception:  # nosec B112
-                # Skip bad entries but keep processing other price points
-                continue
-            series.append((ts, float(total)))
+        cached = self._get_cached()
+        if cached is None:
+            with httpx.Client(timeout=10) as client:
+                resp = client.post(url, json=query, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+            homes = data.get("data", {}).get("viewer", {}).get("homes", [])
+            if not homes:
+                return []
+            price_info = homes[0].get("currentSubscription", {}).get("priceInfo", {})
+            series = []
+            sections = (price_info.get("today", []) or []) + (price_info.get("tomorrow", []) or [])
+            for section in sections:
+                starts_at = section.get("startsAt")
+                total = section.get("total")
+                if starts_at is None or total is None:
+                    continue
+                try:
+                    ts = datetime.fromisoformat(starts_at.replace("Z", "+00:00")).astimezone(
+                        timezone.utc
+                    )
+                except Exception:  # nosec B112
+                    # Skip bad entries but keep processing other price points
+                    continue
+                series.append((ts, float(total)))
+            # Sort and cache full day horizon
+            series.sort(key=lambda p: p[0])
+            self._set_cache(series)
+        else:
+            series = cached
         # Filter to [start, end)
         start = start.astimezone(timezone.utc)
         end = end.astimezone(timezone.utc)
         series = [p for p in series if start <= p[0] < end]
-        # Sort
-        series.sort(key=lambda p: p[0])
         return series
 
 

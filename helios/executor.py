@@ -35,3 +35,24 @@ class NoOpExecutor(Executor):
             slot.action.value,
             when.isoformat(),
         )
+
+
+@dataclass
+class DbusExecutor(Executor):
+    dwell: DwellController | None = None
+
+    def apply_setpoint(self, when: datetime, plan: Plan) -> None:
+        slot = plan.slot_for(when)
+        if slot is None:
+            return
+        if self.dwell is not None and not self.dwell.should_change(slot.action, when):
+            return
+        if self.dwell is not None:
+            self.dwell.note_action(slot.action, when)
+        # Placeholder for future D-Bus integration
+        logger.info(
+            "DbusExecutor would set grid setpoint W=%s action=%s at=%s",
+            slot.target_grid_setpoint_w,
+            slot.action.value,
+            when.isoformat(),
+        )
