@@ -10,13 +10,15 @@ from .dwell import DwellController
 from .executor import Executor
 from .models import Plan
 from .providers import PriceProvider
+from .planner import Planner
+from .scheduler import HeliosScheduler
 
 
 @dataclass
 class HeliosState:
     settings: HeliosSettings
-    scheduler: Optional[object] = None
-    planner: Optional[object] = None
+    scheduler: Optional[HeliosScheduler] = None
+    planner: Optional[Planner] = None
     executor: Optional[Executor] = None
     price_provider: Optional[PriceProvider] = None
 
