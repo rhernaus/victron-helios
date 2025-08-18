@@ -1,8 +1,6 @@
-import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
-import pytest
 
 from helios.providers import TibberPriceProvider
 
@@ -26,10 +24,21 @@ def test_tibber_provider_caches_between_calls(monkeypatch):
         for h in range(0, 24)
     ]
     tomorrow = [
-        {"startsAt": (now + timedelta(hours=24 + h)).isoformat().replace("+00:00", "Z"), "total": 0.20}
+        {
+            "startsAt": (now + timedelta(hours=24 + h)).isoformat().replace("+00:00", "Z"),
+            "total": 0.20,
+        }
         for h in range(0, 24)
     ]
-    payload = {"data": {"viewer": {"homes": [{"currentSubscription": {"priceInfo": {"today": today, "tomorrow": tomorrow}}}]}}}
+    payload = {
+        "data": {
+            "viewer": {
+                "homes": [
+                    {"currentSubscription": {"priceInfo": {"today": today, "tomorrow": tomorrow}}}
+                ]
+            }
+        }
+    }
 
     calls = {"count": 0}
 

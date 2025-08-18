@@ -3,10 +3,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Tuple
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 
 class PriceProvider(ABC):
@@ -61,7 +60,7 @@ class StubPriceProvider(PriceProvider):
 @dataclass
 class TibberPriceProvider(PriceProvider):
     access_token: str
-    _cache: Dict[str, Tuple[datetime, list[tuple[datetime, float]]]] = None  # type: ignore[assignment]
+    _cache: dict[str, tuple[datetime, list[tuple[datetime, float]]]] | None = None
 
     def __post_init__(self) -> None:  # dataclass post-init
         if self._cache is None:
@@ -72,7 +71,8 @@ class TibberPriceProvider(PriceProvider):
 
     def _get_cached(self) -> list[tuple[datetime, float]] | None:
         key = self._cache_key()
-        entry = self._cache.get(key)
+        cache = self._cache or {}
+        entry = cache.get(key)
         if not entry:
             return None
         expires_at, data = entry
@@ -85,6 +85,8 @@ class TibberPriceProvider(PriceProvider):
         # set expiry at next day 03:00 UTC to be safe
         now = datetime.now(timezone.utc)
         next_day = (now + timedelta(days=1)).replace(hour=3, minute=0, second=0, microsecond=0)
+        if self._cache is None:
+            self._cache = {}
         self._cache[self._cache_key()] = (next_day, data)
 
     @retry(
@@ -125,7 +127,8 @@ class TibberPriceProvider(PriceProvider):
                 return []
             price_info = homes[0].get("currentSubscription", {}).get("priceInfo", {})
             series = []
-            for section in (price_info.get("today", []) or []) + (price_info.get("tomorrow", []) or []):
+            sections = (price_info.get("today", []) or []) + (price_info.get("tomorrow", []) or [])
+            for section in sections:
                 starts_at = section.get("startsAt")
                 total = section.get("total")
                 if starts_at is None or total is None:

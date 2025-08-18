@@ -1,6 +1,5 @@
-from datetime import datetime, timezone, timedelta
-
 import time
+
 from fastapi.testclient import TestClient
 
 from helios.api import create_app
@@ -18,7 +17,7 @@ def test_provider_selection_stub_and_horizon_config():
     )
     app = create_app(initial_settings=settings)
     with TestClient(app) as client:
-        # First call triggers planning on startup; fetch plan and validate horizon-derived slot count
+        # First call triggers planning on startup; validate horizon-derived slot count
         resp = client.get("/plan")
         if resp.status_code != 200:
             # brief wait and retry in case startup is not fully completed yet
