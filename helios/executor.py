@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-import logging
 
 from .dwell import DwellController
 from .models import Plan
