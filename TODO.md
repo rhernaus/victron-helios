@@ -14,11 +14,13 @@
   - Graceful fallback to standard ESS on pause/stop/error
   - Device/service discovery and retries/backoff for transient D-Bus errors
   - Executor backend selection via `HELIOS_EXECUTOR_BACKEND`; implement D-Bus executor; watchdog/failsafe behaviors
+    - Stub `DbusExecutor` is wired; replace with real D-Bus operations and watchdog
 
 - **Price provider: Tibber**
   - Fetch day-ahead and real-time hourly prices (timezone-aware)
   - Use raw pre-tax/fee price; apply local buy/sell formulas
   - Caching, rate limiting, and resilience for provider outages
+    - Basic caching and retries implemented; extend with rate limiting and proper home/timezone selection
   - Provider selection via `HELIOS_PRICE_PROVIDER`; home selection and timezone handling for Tibber
 
 - **Forecasting**
@@ -53,6 +55,7 @@
 
 - **Scheduling & orchestration**
   - Safe startup/shutdown sequences; ensure single-instance control
+  - Rescheduling on `/config` updates implemented; validate overlapping job behavior
 
 - **Safety & failsafes**
   - Degraded mode: prioritize self-consumption if price/forecast providers fail
@@ -70,6 +73,7 @@
 
 - **Testing**
   - Unit tests for planner, providers, and config logic
+    - Added: planner horizon, API wiring, Tibber caching
   - Integration tests with simulated D-Bus and recorded traces
   - Scenario-based simulation harness for end-to-end validation
   - Tests for dwell/hysteresis behavior and thresholds
@@ -81,6 +85,7 @@
   - User guide for configuration and UI
   - Provider setup (Tibber, weather APIs, EV APIs)
   - Architecture and extension points (modular providers, forecast engines)
+  - README updated for configuration options (planning horizon, provider/executor selection)
 
 - **Developer experience & CI**
   - Pre-commit hooks for ruff and black
