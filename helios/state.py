@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from threading import RLock
 from typing import Optional
 
 from .config import HeliosSettings
+from .dwell import DwellController
+from .executor import Executor
 from .models import Plan
 
 
@@ -13,12 +16,14 @@ class HeliosState:
     settings: HeliosSettings
     scheduler: Optional[object] = None
     planner: Optional[object] = None
-    executor: Optional[object] = None
+    executor: Optional[Executor] = None
 
     latest_plan: Optional[Plan] = None
     last_recalc_at: Optional[datetime] = None
     last_control_at: Optional[datetime] = None
     automation_paused: bool = False
+    lock: RLock = field(default_factory=RLock)
+    dwell: DwellController = field(default_factory=lambda: DwellController(minimum_dwell_seconds=0))
 
 
 _global_state: Optional[HeliosState] = None

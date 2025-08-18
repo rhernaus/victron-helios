@@ -35,3 +35,13 @@ class Plan(BaseModel):
             if slot.start <= at < slot.end:
                 return slot
         return None
+
+
+class StatusResponse(BaseModel):
+    automation_paused: bool
+    last_recalc_at: Optional[datetime]
+    last_control_at: Optional[datetime]
+
+
+class ConfigResponse(BaseModel):
+    data: dict

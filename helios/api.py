@@ -1,42 +1,64 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import ORJSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from .config import ConfigUpdate, HeliosSettings
-from .models import Plan
+from .executor import Executor, NoOpExecutor
+from .metrics import (
+    automation_paused,
+    control_ticks_total,
+    current_setpoint_watts,
+    planner_runs_total,
+)
+from .models import ConfigResponse, Plan, StatusResponse
 from .planner import Planner
+from .providers import StubPriceProvider
 from .scheduler import HeliosScheduler
 from .state import HeliosState, get_state
 
+logger = logging.getLogger("helios")
+
 
 def _recalc_plan(state: HeliosState) -> None:
-    # Stub price curve: 48h hourly prices with a gentle daily swing
+    # Retrieve price curve using provider abstraction (stub for now)
     now = datetime.now(timezone.utc)
     start_hour = now.replace(minute=0, second=0, microsecond=0)
-    hourly_prices: list[tuple[datetime, float]] = []
-    for h in range(0, 48):
-        t = start_hour + timedelta(hours=h)
-        # simple 24h sawtooth between 0.15 and 0.35 EUR/kWh
-        base = 0.25
-        amplitude = 0.10
-        phase = (h % 24) / 24.0
-        price = base + amplitude * (2 * phase - 1)
-        hourly_prices.append((t, round(price, 4)))
+    provider = StubPriceProvider()
+    hourly_prices = provider.get_prices(start_hour, start_hour + timedelta(hours=48))
 
     planner: Planner = state.planner  # type: ignore[assignment]
     plan: Plan = planner.build_plan(price_series=hourly_prices, now=now)
-    state.latest_plan = plan
-    state.last_recalc_at = now
+    with state.lock:
+        state.latest_plan = plan
+        state.last_recalc_at = now
+    planner_runs_total.inc()
 
 
 def _do_control(state: HeliosState) -> None:
     now = datetime.now(timezone.utc)
-    state.last_control_at = now
-    # Executor stub: in future this will emit D-Bus setpoints
+    # Skip if paused
+    with state.lock:
+        state.last_control_at = now
+        paused = state.automation_paused
+        plan = state.latest_plan
+    automation_paused.set(1 if paused else 0)
+    if paused:
+        return
+    if plan is None:
+        return
+    # Apply via executor abstraction
+    executor: Executor = state.executor or NoOpExecutor(dwell=state.dwell)
+    executor.apply_setpoint(now, plan)
+    slot = plan.slot_for(now)
+    if slot is not None:
+        current_setpoint_watts.set(slot.target_grid_setpoint_w)
+    control_ticks_total.inc()
 
 
 def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
@@ -51,6 +73,8 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
         state.planner = Planner(state.settings)
     if state.scheduler is None:
         state.scheduler = HeliosScheduler(state)
+    if state.executor is None:
+        state.executor = NoOpExecutor(dwell=state.dwell)
 
     def recalc_job():
         _recalc_plan(state)
@@ -74,30 +98,59 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
     def health() -> dict:
         return {"status": "ok"}
 
-    @app.get("/config")
-    def get_config() -> dict:
-        return state.settings.to_public_dict()
+    @app.post("/pause")
+    def pause() -> StatusResponse:
+        with state.lock:
+            state.automation_paused = True
+        return status()
 
-    @app.put("/config")
-    def update_config(update: ConfigUpdate) -> dict:
-        update.apply_to(state.settings)
-        # reschedule with new intervals
-        scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
-        scheduler.reschedule(recalc_job=recalc_job, control_job=control_job)
-        return state.settings.to_public_dict()
+    @app.post("/resume")
+    def resume() -> StatusResponse:
+        with state.lock:
+            state.automation_paused = False
+        return status()
 
-    @app.get("/status")
-    def status() -> dict:
-        return {
-            "automation_paused": state.automation_paused,
-            "last_recalc_at": state.last_recalc_at,
-            "last_control_at": state.last_control_at,
-        }
+    @app.get("/metrics")
+    def metrics() -> ORJSONResponse:
+        data = generate_latest()
+        # Return a raw Response with the correct content type
+        from fastapi import Response
+
+        return Response(content=data, media_type=CONTENT_TYPE_LATEST)
+
+    @app.get("/config", response_model=ConfigResponse)
+    def get_config() -> ConfigResponse:
+        with state.lock:
+            return ConfigResponse(data=state.settings.to_public_dict())
+
+    @app.put("/config", response_model=ConfigResponse)
+    def update_config(update: ConfigUpdate) -> ConfigResponse:
+        # Apply atomically and validate via HeliosSettings
+        try:
+            with state.lock:
+                new_settings = update.apply_to(state.settings)
+                state.settings = new_settings
+                # reschedule with new intervals
+                scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
+                scheduler.reschedule(recalc_job=recalc_job, control_job=control_job)
+                return ConfigResponse(data=state.settings.to_public_dict())
+        except Exception as exc:  # validation or other issues
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.get("/status", response_model=StatusResponse)
+    def status() -> StatusResponse:
+        with state.lock:
+            return StatusResponse(
+                automation_paused=state.automation_paused,
+                last_recalc_at=state.last_recalc_at,
+                last_control_at=state.last_control_at,
+            )
 
     @app.get("/plan")
     def get_plan() -> dict:
-        if state.latest_plan is None:
-            raise HTTPException(status_code=404, detail="Plan not ready")
-        return state.latest_plan.model_dump()
+        with state.lock:
+            if state.latest_plan is None:
+                raise HTTPException(status_code=404, detail="Plan not ready")
+            return state.latest_plan.model_dump()
 
     return app

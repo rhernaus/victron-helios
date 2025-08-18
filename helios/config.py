@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,8 +18,11 @@ class HeliosSettings(BaseSettings):
     recalculation_interval_seconds: int = Field(default=300, ge=30)
     dbus_update_interval_seconds: int = Field(default=10, ge=1)
     scheduler_timezone: str = Field(default="UTC")
+    minimum_action_dwell_seconds: int = Field(default=0, ge=0)
 
     # Pricing adjustments
+    price_provider: str = Field(default="stub")  # options: stub, tibber
+    price_hysteresis_eur_per_kwh: float = Field(default=0.02, ge=0)
     buy_price_multiplier: float = Field(default=1.0, ge=0)
     buy_price_fixed_fee_eur_per_kwh: float = Field(default=0.0)
     sell_price_multiplier: float = Field(default=1.0, ge=0)
@@ -44,6 +47,9 @@ class HeliosSettings(BaseSettings):
     tibber_token: Optional[str] = None
     openweather_api_key: Optional[str] = None
 
+    # Execution
+    executor_backend: str = Field(default="noop")  # options: noop, dbus
+
     def to_public_dict(self) -> dict:
         data = self.model_dump()
         # remove secret material; expose presence booleans instead
@@ -53,13 +59,30 @@ class HeliosSettings(BaseSettings):
         data.pop("openweather_api_key", None)
         return data
 
+    @model_validator(mode="after")
+    def _validate_invariants(self) -> HeliosSettings:
+        # Recalc interval must be <= planning window
+        if self.recalculation_interval_seconds > self.planning_window_seconds:
+            raise ValueError("recalculation_interval_seconds must be <= planning_window_seconds")
+        # SoC bounds sanity
+        if not (0 <= self.min_soc_percent <= self.max_soc_percent <= 100):
+            raise ValueError("SoC bounds must satisfy 0 <= min <= max <= 100")
+        if not (self.min_soc_percent <= self.reserve_soc_percent <= self.max_soc_percent):
+            raise ValueError(
+                "reserve_soc_percent must be between min_soc_percent and max_soc_percent"
+            )
+        return self
+
 
 class ConfigUpdate(BaseModel):
     planning_window_seconds: Optional[int] = None
     recalculation_interval_seconds: Optional[int] = None
     dbus_update_interval_seconds: Optional[int] = None
     scheduler_timezone: Optional[str] = None
+    minimum_action_dwell_seconds: Optional[int] = None
 
+    price_provider: Optional[str] = None
+    price_hysteresis_eur_per_kwh: Optional[float] = None
     buy_price_multiplier: Optional[float] = None
     buy_price_fixed_fee_eur_per_kwh: Optional[float] = None
     sell_price_multiplier: Optional[float] = None
@@ -80,9 +103,13 @@ class ConfigUpdate(BaseModel):
     location_lon: Optional[float] = None
     tibber_token: Optional[str] = None
     openweather_api_key: Optional[str] = None
+    executor_backend: Optional[str] = None
 
     def apply_to(self, settings: HeliosSettings) -> HeliosSettings:
+        """Return a new validated settings instance with the updates applied atomically."""
         updates = {k: v for k, v in self.model_dump().items() if v is not None}
-        for key, value in updates.items():
-            setattr(settings, key, value)
-        return settings
+        # Build a new settings object to avoid transient invalid states during setattr
+        current = settings.model_dump()
+        current.update(updates)
+        new_settings = HeliosSettings.model_validate(current)
+        return new_settings
