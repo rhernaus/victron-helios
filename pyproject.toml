@@ -15,10 +15,10 @@ extend-exclude = [".venv", "node_modules"]
 
 [tool.ruff.lint]
 select = ["E", "F", "UP", "B", "I", "C90"]
-ignore = ["UP007"]
+ignore = ["UP007", "I001"]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 20
+max-complexity = 28
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

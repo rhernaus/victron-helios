@@ -1,20 +1,23 @@
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timedelta, timezone
+import logging
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import ORJSONResponse
+from fastapi import FastAPI, HTTPException, Response
+from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from .config import ConfigUpdate, HeliosSettings
 from .executor import DbusExecutor, Executor, NoOpExecutor
 from .metrics import (
     automation_paused,
+    control_job_runs_total,
     control_ticks_total,
     current_setpoint_watts,
+    plan_age_seconds,
     planner_runs_total,
+    recalc_job_runs_total,
 )
 from .models import ConfigResponse, Plan, StatusResponse
 from .planner import Planner
@@ -27,13 +30,16 @@ logger = logging.getLogger("helios")
 
 def _select_price_provider(settings: HeliosSettings) -> PriceProvider:
     if settings.price_provider == "tibber" and settings.tibber_token:
-        return TibberPriceProvider(access_token=settings.tibber_token)
+        return TibberPriceProvider(
+            access_token=settings.tibber_token,
+            home_id=settings.tibber_home_id,
+        )
     return StubPriceProvider()
 
 
 def _select_executor(settings: HeliosSettings, dwell) -> Executor:
     if settings.executor_backend == "dbus":
-        return DbusExecutor(dwell=dwell)
+        return DbusExecutor(dwell=dwell, settings=settings)
     return NoOpExecutor(dwell=dwell)
 
 
@@ -83,6 +89,7 @@ def _recalc_plan(state: HeliosState) -> None:
         state.latest_plan = plan
         state.last_recalc_at = now
     planner_runs_total.inc()
+    plan_age_seconds.set(0)
 
 
 def _do_control(state: HeliosState) -> None:
@@ -107,11 +114,20 @@ def _do_control(state: HeliosState) -> None:
 
 
 def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
-    app = FastAPI(default_response_class=ORJSONResponse)
+    app = FastAPI(default_response_class=JSONResponse)
 
     state = get_state()
     if initial_settings is not None:
         state.settings = initial_settings
+    else:
+        # Attempt to load persisted settings (sanitized) and overlay on defaults
+        loaded = HeliosSettings.load_from_disk(HeliosSettings().data_dir)
+        if loaded:
+            try:
+                merged = {**state.settings.model_dump(), **loaded}
+                state.settings = HeliosSettings.model_validate(merged)
+            except Exception:  # nosec B112
+                logger.warning("Failed to load settings from disk; using defaults")
 
     # Initialize planner and scheduler if not already
     if state.planner is None:
@@ -126,9 +142,11 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
         state.price_provider = _select_price_provider(state.settings)
 
     def recalc_job():
+        recalc_job_runs_total.inc()
         _recalc_plan(state)
 
     def control_job():
+        control_job_runs_total.inc()
         _do_control(state)
 
     @app.on_event("startup")
@@ -160,11 +178,9 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
         return status()
 
     @app.get("/metrics")
-    def metrics() -> ORJSONResponse:
+    def metrics() -> Response:
         data = generate_latest()
         # Return a raw Response with the correct content type
-        from fastapi import Response
-
         return Response(content=data, media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/config", response_model=ConfigResponse)
@@ -183,11 +199,31 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
                 state.dwell.minimum_dwell_seconds = new_settings.minimum_action_dwell_seconds
                 # swap executor if backend changed
                 state.executor = _select_executor(new_settings, dwell=state.dwell)
-                # swap provider if selection or token changed
-                state.price_provider = _select_price_provider(new_settings)
+                # swap provider only if selection, token or home changed
+                # preserve cache when configuration remains stable
+                current_provider = state.price_provider
+                desired_provider = _select_price_provider(new_settings)
+                swap = False
+                if type(current_provider) is not type(desired_provider):
+                    swap = True
+                elif isinstance(current_provider, TibberPriceProvider) and isinstance(
+                    desired_provider, TibberPriceProvider
+                ):
+                    if (
+                        current_provider.access_token != desired_provider.access_token
+                        or current_provider.home_id != desired_provider.home_id
+                    ):
+                        swap = True
+                if swap or current_provider is None:
+                    state.price_provider = desired_provider
                 # reschedule with new intervals
                 scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
                 scheduler.reschedule(recalc_job=recalc_job, control_job=control_job)
+                # persist non-secret settings snapshot to disk
+                try:
+                    state.settings.persist_to_disk()
+                except Exception:  # nosec B112
+                    logger.warning("Failed to persist settings to disk")
                 return ConfigResponse(data=state.settings.to_public_dict())
         except Exception as exc:  # validation or other issues
             raise HTTPException(status_code=400, detail=str(exc)) from None
@@ -206,6 +242,9 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
         with state.lock:
             if state.latest_plan is None:
                 raise HTTPException(status_code=404, detail="Plan not ready")
+            plan_age_seconds.set(
+                (datetime.now(timezone.utc) - state.latest_plan.generated_at).total_seconds()
+            )
             return state.latest_plan.model_dump()
 
     return app

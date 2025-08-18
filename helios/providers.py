@@ -3,9 +3,16 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import time
 
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from .metrics import (
+    price_provider_failures_total,
+    price_provider_request_seconds,
+    price_provider_requests_total,
+)
 
 
 class PriceProvider(ABC):
@@ -61,13 +68,20 @@ class StubPriceProvider(PriceProvider):
 class TibberPriceProvider(PriceProvider):
     access_token: str
     _cache: dict[str, tuple[datetime, list[tuple[datetime, float]]]] | None = None
+    home_id: str | None = None
+    _rate_tokens: float = 2.0
+    _rate_last_refill: float = 0.0
+    _rate_capacity: float = 2.0
+    _rate_per_second: float = 1 / 10.0  # 1 request per 10s
 
     def __post_init__(self) -> None:  # dataclass post-init
         if self._cache is None:
             self._cache = {}
+        self._rate_last_refill = time.monotonic()
 
     def _cache_key(self) -> str:
-        return "prices_today_tomorrow"
+        suffix = self.home_id or "default"
+        return f"prices_today_tomorrow::{suffix}"
 
     def _get_cached(self) -> list[tuple[datetime, float]] | None:
         key = self._cache_key()
@@ -89,6 +103,22 @@ class TibberPriceProvider(PriceProvider):
             self._cache = {}
         self._cache[self._cache_key()] = (next_day, data)
 
+    def _rate_limit(self) -> None:
+        now = time.monotonic()
+        elapsed = max(0.0, now - self._rate_last_refill)
+        self._rate_last_refill = now
+        self._rate_tokens = min(
+            self._rate_capacity, self._rate_tokens + elapsed * self._rate_per_second
+        )
+        if self._rate_tokens < 1.0:
+            # Sleep just enough to accumulate one token
+            needed = 1.0 - self._rate_tokens
+            delay = needed / self._rate_per_second
+            time.sleep(min(delay, 2.0))
+            self._rate_tokens = 0.0
+        else:
+            self._rate_tokens -= 1.0
+
     @retry(
         reraise=True,
         stop=stop_after_attempt(3),
@@ -102,14 +132,14 @@ class TibberPriceProvider(PriceProvider):
             "query": """
             query {
               viewer {
-                homes {
-                  currentSubscription {
-                    priceInfo {
-                      today { total startsAt }
-                      tomorrow { total startsAt }
-                    }
-                  }
-                }
+                 homes {
+                   currentSubscription {
+                     priceInfo {
+                       today { total startsAt }
+                       tomorrow { total startsAt }
+                     }
+                   }
+                 }
               }
             }
             """
@@ -118,14 +148,31 @@ class TibberPriceProvider(PriceProvider):
         url = "https://api.tibber.com/v1-beta/gql"
         cached = self._get_cached()
         if cached is None:
-            with httpx.Client(timeout=10) as client:
-                resp = client.post(url, json=query, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
+            with price_provider_request_seconds.labels(provider="tibber").time():
+                try:
+                    self._rate_limit()
+                    with httpx.Client(timeout=10) as client:
+                        resp = client.post(url, json=query, headers=headers)
+                        resp.raise_for_status()
+                        data = resp.json()
+                    price_provider_requests_total.labels(provider="tibber", result="success").inc()
+                except httpx.HTTPError:
+                    price_provider_requests_total.labels(provider="tibber", result="error").inc()
+                    price_provider_failures_total.inc()
+                    raise
             homes = data.get("data", {}).get("viewer", {}).get("homes", [])
             if not homes:
                 return []
-            price_info = homes[0].get("currentSubscription", {}).get("priceInfo", {})
+            # Optional: choose home by ID if provided
+            home = None
+            if self.home_id:
+                for h in homes:
+                    if h.get("id") == self.home_id:
+                        home = h
+                        break
+            if home is None:
+                home = homes[0]
+            price_info = home.get("currentSubscription", {}).get("priceInfo", {})
             series = []
             sections = (price_info.get("today", []) or []) + (price_info.get("tomorrow", []) or [])
             for section in sections:

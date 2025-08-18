@@ -9,19 +9,22 @@
   
 
 - **Victron GX (D-Bus) integration**
-  - Implement robust D-Bus client: read telemetry (PV, grid, battery, load), write grid setpoint
-  - High-frequency control loop publishing setpoints at configured interval; watchdog to maintain control
-  - Graceful fallback to standard ESS on pause/stop/error
-  - Device/service discovery and retries/backoff for transient D-Bus errors
-  - Executor backend selection via `HELIOS_EXECUTOR_BACKEND`; implement D-Bus executor; watchdog/failsafe behaviors
-    - Stub `DbusExecutor` is wired; replace with real D-Bus operations and watchdog
+  - Implement robust D-Bus client:
+    - Write ESS grid setpoint at `/Settings/CGwacs/AcPowerSetPoint` (clamped to configured limits)
+    - Read telemetry (PV, grid, battery, load) from `com.victronenergy.system`
+  - Control loop with watchdog:
+    - Publish setpoints at configured cadence; re-assert with bounded retries
+    - On pause/stop/error, set grid setpoint to 0 and stop writing; revert to standard ESS behavior
+  - Service discovery and retries/backoff for transient D-Bus errors
+  - Executor backend selection via `HELIOS_EXECUTOR_BACKEND`; implement D-Bus executor with failsafe behaviors
+  - Add metrics for apply latency/success/failure; misfires
 
 - **Price provider: Tibber**
   - Fetch day-ahead and real-time hourly prices (timezone-aware)
   - Use raw pre-tax/fee price; apply local buy/sell formulas
   - Caching, rate limiting, and resilience for provider outages
-    - Basic caching and retries implemented; extend with rate limiting and proper home/timezone selection
-  - Provider selection via `HELIOS_PRICE_PROVIDER`; home selection and timezone handling for Tibber
+    - Basic caching and retries implemented; extend with token-bucket rate limiting and proper home/timezone selection
+  - Provider selection via `HELIOS_PRICE_PROVIDER`; `HELIOS_TIBBER_HOME_ID` selection and timezone handling for Tibber
 
 - **Forecasting**
   - Solar production forecast:
@@ -50,12 +53,13 @@
 - **Persistence & storage**
   - Persist configuration (including secrets) securely on device
   - Store time-series telemetry and plan history for analytics and model training
-  - Implement `.env`/YAML config writer and load-on-start; avoid returning secrets via API
+  - Implement `.env`/YAML config writer under `/data/helios` and load-on-start; avoid returning secrets via API
   - Ensure secure file permissions for secrets at rest
 
 - **Scheduling & orchestration**
   - Safe startup/shutdown sequences; ensure single-instance control
   - Rescheduling on `/config` updates implemented; validate overlapping job behavior
+  - Add jitter and misfire grace to interval schedules; metrics for job runs/misfires
 
 - **Safety & failsafes**
   - Degraded mode: prioritize self-consumption if price/forecast providers fail
@@ -66,10 +70,11 @@
   - Structured logging with redaction
   - Duration histograms for planning/control; error counters; Prometheus metrics extensions
   - Request/response access logs with sensitive field filtering
+  - Add metrics for provider requests, executor apply time/failures, plan age, scheduler runs/misfires
 
 - **Packaging & deployment**
-  - Build/install instructions for Venus OS (GX): dependencies, service unit/supervisor, autostart
-  - Resource footprint optimizations for embedded environment
+  - Build/install instructions for Venus OS (GX): dependencies, venv under `/data/helios`, rc.local autostart
+  - Resource footprint optimizations for embedded environment; avoid compiled extras
 
 - **Testing**
   - Unit tests for planner, providers, and config logic
@@ -80,13 +85,16 @@
   - Provider adapter tests (Tibber happy-path/error-path, timezone handling)
   - Executor behavior tests (including dwell), DST/timezone boundary tests
   - Simulated D-Bus integration tests
+  - Tests for provider swap preservation of cache across config updates
 
 - **Documentation**
   - User guide for configuration and UI
   - Provider setup (Tibber, weather APIs, EV APIs)
   - Architecture and extension points (modular providers, forecast engines)
+  - Cerbo GX setup guide: D-Bus permissions, `/data` layout, startup via `/data/rc.local`
   - README updated for configuration options (planning horizon, provider/executor selection)
 
 - **Developer experience & CI**
   - Pre-commit hooks for ruff and black
   - Keep CI checks for ruff, black, mypy, bandit; fast-fail on lint/type errors
+  - Add CI job running tests with dbus-sim mode

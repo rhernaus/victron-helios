@@ -20,6 +20,8 @@ class HeliosSettings(BaseSettings):
     dbus_update_interval_seconds: int = Field(default=10, ge=1)
     scheduler_timezone: str = Field(default="UTC")
     minimum_action_dwell_seconds: int = Field(default=0, ge=0)
+    log_level: str = Field(default="INFO")
+    data_dir: str = Field(default="/data/helios")
 
     # Pricing adjustments
     price_provider: str = Field(default="stub")  # options: stub, tibber
@@ -46,6 +48,7 @@ class HeliosSettings(BaseSettings):
     location_lat: Optional[float] = None
     location_lon: Optional[float] = None
     tibber_token: Optional[str] = None
+    tibber_home_id: Optional[str] = None
     openweather_api_key: Optional[str] = None
 
     # Execution
@@ -59,6 +62,27 @@ class HeliosSettings(BaseSettings):
         data.pop("tibber_token", None)
         data.pop("openweather_api_key", None)
         return data
+
+    def persist_to_disk(self) -> None:
+        import json
+        import os
+
+        os.makedirs(self.data_dir, exist_ok=True)
+        path = os.path.join(self.data_dir, "settings.json")
+        # Persist a sanitized copy with secrets omitted
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.to_public_dict(), f, indent=2, sort_keys=True)
+
+    @staticmethod
+    def load_from_disk(data_dir: str) -> dict | None:
+        import json
+        import os
+
+        path = os.path.join(data_dir, "settings.json")
+        if not os.path.exists(path):
+            return None
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
 
     @model_validator(mode="after")
     def _validate_invariants(self) -> HeliosSettings:

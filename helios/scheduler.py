@@ -25,19 +25,27 @@ class HeliosScheduler:
         settings = self.state.settings
         self.scheduler.add_job(
             recalc_job,
-            IntervalTrigger(seconds=settings.recalculation_interval_seconds),
+            IntervalTrigger(
+                seconds=settings.recalculation_interval_seconds,
+                jitter=min(1, max(0, settings.recalculation_interval_seconds // 10)),
+            ),
             id="recalc",
             replace_existing=True,
             coalesce=True,
             max_instances=1,
+            misfire_grace_time=max(1, settings.recalculation_interval_seconds),
         )
         self.scheduler.add_job(
             control_job,
-            IntervalTrigger(seconds=settings.dbus_update_interval_seconds),
+            IntervalTrigger(
+                seconds=settings.dbus_update_interval_seconds,
+                jitter=min(1, max(0, settings.dbus_update_interval_seconds // 10)),
+            ),
             id="control",
             replace_existing=True,
             coalesce=True,
             max_instances=1,
+            misfire_grace_time=max(1, settings.dbus_update_interval_seconds),
         )
 
     def reschedule(self, recalc_job: Callable[[], None], control_job: Callable[[], None]) -> None:

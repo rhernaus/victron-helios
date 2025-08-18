@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from threading import RLock
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .config import HeliosSettings
 from .dwell import DwellController
@@ -11,12 +11,16 @@ from .executor import Executor
 from .models import Plan
 from .providers import PriceProvider
 
+if TYPE_CHECKING:
+    from .planner import Planner
+    from .scheduler import HeliosScheduler
+
 
 @dataclass
 class HeliosState:
     settings: HeliosSettings
-    scheduler: Optional[object] = None
-    planner: Optional[object] = None
+    scheduler: Optional[HeliosScheduler] = None
+    planner: Optional[Planner] = None
     executor: Optional[Executor] = None
     price_provider: Optional[PriceProvider] = None
 
