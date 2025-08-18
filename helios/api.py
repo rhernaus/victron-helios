@@ -48,8 +48,8 @@ def _recalc_plan(state: HeliosState) -> None:
         provider: PriceProvider | None = state.price_provider
 
         # Decide if we need a new provider based on settings
-        desired_is_tibber = (
-            settings_snapshot.price_provider == "tibber" and bool(settings_snapshot.tibber_token)
+        desired_is_tibber = settings_snapshot.price_provider == "tibber" and bool(
+            settings_snapshot.tibber_token
         )
         needs_new = False
         if provider is None:
