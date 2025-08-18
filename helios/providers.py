@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Iterable, Optional
+import httpx
 
 
 class PriceProvider(ABC):
@@ -54,6 +55,63 @@ class StubPriceProvider(PriceProvider):
             phase = (h % 24) / 24.0
             price = base + amplitude * (2 * phase - 1)
             series.append((t, round(price, 4)))
+        return series
+
+
+@dataclass
+class TibberPriceProvider(PriceProvider):
+    access_token: str
+
+    def get_prices(self, start: datetime, end: datetime) -> list[tuple[datetime, float]]:
+        # Minimal Tibber GraphQL query for current home prices
+        # Note: In a full implementation, select the correct home and timezone handling.
+        query = {
+            "query": """
+            query {
+              viewer {
+                homes {
+                  currentSubscription {
+                    priceInfo {
+                      today { total startsAt }
+                      tomorrow { total startsAt }
+                    }
+                  }
+                }
+              }
+            }
+            """
+        }
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        url = "https://api.tibber.com/v1-beta/gql"
+        with httpx.Client(timeout=10) as client:
+            resp = client.post(url, json=query, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        homes = (
+            data.get("data", {})
+            .get("viewer", {})
+            .get("homes", [])
+        )
+        if not homes:
+            return []
+        price_info = homes[0].get("currentSubscription", {}).get("priceInfo", {})
+        series = []
+        for section in (price_info.get("today", []) or []) + (price_info.get("tomorrow", []) or []):
+            starts_at = section.get("startsAt")
+            total = section.get("total")
+            if starts_at is None or total is None:
+                continue
+            try:
+                ts = datetime.fromisoformat(starts_at.replace("Z", "+00:00")).astimezone(timezone.utc)
+            except Exception:
+                continue
+            series.append((ts, float(total)))
+        # Filter to [start, end)
+        start = start.astimezone(timezone.utc)
+        end = end.astimezone(timezone.utc)
+        series = [p for p in series if start <= p[0] < end]
+        # Sort
+        series.sort(key=lambda p: p[0])
         return series
 
 

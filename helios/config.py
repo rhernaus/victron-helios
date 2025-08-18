@@ -19,8 +19,11 @@ class HeliosSettings(BaseSettings):
     recalculation_interval_seconds: int = Field(default=300, ge=30)
     dbus_update_interval_seconds: int = Field(default=10, ge=1)
     scheduler_timezone: str = Field(default="UTC")
+    minimum_action_dwell_seconds: int = Field(default=0, ge=0)
 
     # Pricing adjustments
+    price_provider: str = Field(default="stub")  # options: stub, tibber
+    price_hysteresis_eur_per_kwh: float = Field(default=0.02, ge=0)
     buy_price_multiplier: float = Field(default=1.0, ge=0)
     buy_price_fixed_fee_eur_per_kwh: float = Field(default=0.0)
     sell_price_multiplier: float = Field(default=1.0, ge=0)
@@ -44,6 +47,9 @@ class HeliosSettings(BaseSettings):
     location_lon: Optional[float] = None
     tibber_token: Optional[str] = None
     openweather_api_key: Optional[str] = None
+
+    # Execution
+    executor_backend: str = Field(default="noop")  # options: noop, dbus
 
     def to_public_dict(self) -> dict:
         data = self.model_dump()
@@ -76,7 +82,10 @@ class ConfigUpdate(BaseModel):
     recalculation_interval_seconds: Optional[int] = None
     dbus_update_interval_seconds: Optional[int] = None
     scheduler_timezone: Optional[str] = None
+    minimum_action_dwell_seconds: Optional[int] = None
 
+    price_provider: Optional[str] = None
+    price_hysteresis_eur_per_kwh: Optional[float] = None
     buy_price_multiplier: Optional[float] = None
     buy_price_fixed_fee_eur_per_kwh: Optional[float] = None
     sell_price_multiplier: Optional[float] = None
@@ -97,6 +106,7 @@ class ConfigUpdate(BaseModel):
     location_lon: Optional[float] = None
     tibber_token: Optional[str] = None
     openweather_api_key: Optional[str] = None
+    executor_backend: Optional[str] = None
 
     def apply_to(self, settings: HeliosSettings) -> HeliosSettings:
         """Return a new validated settings instance with the updates applied atomically."""

@@ -48,7 +48,7 @@ def _do_control(state: HeliosState) -> None:
     if plan is None:
         return
     # Apply via executor abstraction
-    executor: Executor = state.executor or NoOpExecutor()
+    executor: Executor = state.executor or NoOpExecutor(dwell=state.dwell)
     executor.apply_setpoint(now, plan)
     slot = plan.slot_for(now)
     if slot is not None:
@@ -69,7 +69,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
     if state.scheduler is None:
         state.scheduler = HeliosScheduler(state)
     if state.executor is None:
-        state.executor = NoOpExecutor()
+        state.executor = NoOpExecutor(dwell=state.dwell)
 
     def recalc_job():
         _recalc_plan(state)
