@@ -1,3 +1,74 @@
+## Helios — Advanced Dynamic Energy Management for Victron GX (Venus OS)
+
+Helios is a modular controller that optimizes home energy usage on Victron GX devices by planning battery/grid/solar/EV actions using price signals and forecasts.
+
+### Features (MVP)
+- Planning engine with configurable time slices and recalculation interval
+- Control loop that drives Victron grid setpoint at a fast cadence
+- Integrations (pluggable): Tibber pricing, Solcast solar, simple consumption model
+- Web UI (FastAPI) for status, plan, and configuration
+- Simulation mode for development without a GX device
+
+### Quick start (development, simulation)
+
+1) Create and activate a virtual environment, then install dependencies:
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+2) Start Helios (simulation mode enabled by default if no D-Bus present):
+```bash
+python -m helios
+```
+
+3) Open the web UI:
+```
+http://localhost:8000/
+```
+
+### Configuration
+
+Configuration is stored at `~/.helios/config.json` by default (overridable via `HELIOS_DATA_DIR`). You can also set environment variables for secrets and keys.
+
+Key settings:
+
+- System behavior:
+  - `planning_window_seconds` (default 900)
+  - `recalculation_interval_seconds` (default 300)
+  - `dbus_update_interval_seconds` (default 10)
+  - `planning_horizon_hours` (default 36)
+
+- Pricing:
+  - `tibber_api_token` (set to use Tibber). Raw energy price (`energy` field) is used as baseline.
+  - Buy/Sell price calculation: multiplier and additive fields
+
+- Battery:
+  - `battery_capacity_kwh`, `max_charge_w`, `max_discharge_w`
+  - `min_soc_percent`, `max_soc_percent`, `self_consumption_reserve_percent`
+
+- Grid:
+  - `grid_feed_in_enabled`
+  - `grid_import_limit_w`, `grid_export_limit_w`
+
+- Location:
+  - `latitude`, `longitude`
+  - `solcast_api_key`, `solcast_site_id` (optional)
+
+### Running on Victron GX (notes)
+
+- Helios uses D-Bus via `dbus-next`. On GX, run as a service and point `HELIOS_DATA_DIR` to a persistent location (e.g., `/data/helios`).
+- The controller writes to `/Settings/CGwacs/AcPowerSetPoint` to manage grid exchange. Ensure ESS is active and DVCC is configured appropriately.
+
+### Development tips
+
+- Without API keys, Helios will operate in simulation with synthetic prices/forecasts.
+- Adjust core settings via `/api/config` or edit the JSON config file while developing.
+
+### Security
+
+- Store API tokens via environment variables or in the config file with proper filesystem permissions.
+
 # Helios: Advanced Dynamic Energy Management for Victron GX
 
 Helios is a highly configurable and intelligent energy management system for Victron GX devices (Venus OS). It aims to minimize electricity costs and maximize self-consumption by planning ahead and continuously optimizing actions based on real-time energy prices, predicted solar generation, and forecasted household consumption. Helios is designed as a more powerful and flexible alternative to standard Dynamic ESS functionality.
