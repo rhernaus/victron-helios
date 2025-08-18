@@ -45,32 +45,37 @@ def _recalc_plan(state: HeliosState) -> None:
     # Determine provider and horizon atomically; do not hold the lock for network calls
     with state.lock:
         settings_snapshot = state.settings
-        provider: PriceProvider | None = state.price_provider
+        current_provider: PriceProvider | None = state.price_provider
 
         # Decide if we need a new provider based on settings
         desired_is_tibber = settings_snapshot.price_provider == "tibber" and bool(
             settings_snapshot.tibber_token
         )
         needs_new = False
-        if provider is None:
+        if current_provider is None:
             needs_new = True
-        elif desired_is_tibber and not isinstance(provider, TibberPriceProvider):
+        elif desired_is_tibber and not isinstance(current_provider, TibberPriceProvider):
             needs_new = True
-        elif not desired_is_tibber and not isinstance(provider, StubPriceProvider):
+        elif not desired_is_tibber and not isinstance(current_provider, StubPriceProvider):
             needs_new = True
-        elif desired_is_tibber and isinstance(provider, TibberPriceProvider):
+        elif desired_is_tibber and isinstance(current_provider, TibberPriceProvider):
             # Replace if token changed
-            if provider.access_token != settings_snapshot.tibber_token:
+            if current_provider.access_token != settings_snapshot.tibber_token:
                 needs_new = True
 
         if needs_new:
-            provider = _select_price_provider(settings_snapshot)
-            state.price_provider = provider
+            provider_to_use: PriceProvider = _select_price_provider(settings_snapshot)
+            state.price_provider = provider_to_use
+        else:
+            # current_provider is not None here by construction
+            provider_to_use = current_provider  # type: ignore[assignment]
 
         horizon_hours = settings_snapshot.planning_horizon_hours
 
     # Fetch prices outside the lock
-    hourly_prices = provider.get_prices(start_hour, start_hour + timedelta(hours=horizon_hours))
+    hourly_prices = provider_to_use.get_prices(
+        start_hour, start_hour + timedelta(hours=horizon_hours)
+    )
 
     planner: Planner = state.planner  # type: ignore[assignment]
     plan: Plan = planner.build_plan(price_series=hourly_prices, now=now)
