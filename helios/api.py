@@ -41,10 +41,35 @@ def _recalc_plan(state: HeliosState) -> None:
     # Retrieve price curve using provider abstraction
     now = datetime.now(timezone.utc)
     start_hour = now.replace(minute=0, second=0, microsecond=0)
-    # Reuse provider to preserve caches
-    provider = state.price_provider or _select_price_provider(state.settings)
-    state.price_provider = provider
-    horizon_hours = state.settings.planning_horizon_hours
+
+    # Determine provider and horizon atomically; do not hold the lock for network calls
+    with state.lock:
+        settings_snapshot = state.settings
+        provider: PriceProvider | None = state.price_provider
+
+        # Decide if we need a new provider based on settings
+        desired_is_tibber = (
+            settings_snapshot.price_provider == "tibber" and bool(settings_snapshot.tibber_token)
+        )
+        needs_new = False
+        if provider is None:
+            needs_new = True
+        elif desired_is_tibber and not isinstance(provider, TibberPriceProvider):
+            needs_new = True
+        elif not desired_is_tibber and not isinstance(provider, StubPriceProvider):
+            needs_new = True
+        elif desired_is_tibber and isinstance(provider, TibberPriceProvider):
+            # Replace if token changed
+            if provider.access_token != settings_snapshot.tibber_token:
+                needs_new = True
+
+        if needs_new:
+            provider = _select_price_provider(settings_snapshot)
+            state.price_provider = provider
+
+        horizon_hours = settings_snapshot.planning_horizon_hours
+
+    # Fetch prices outside the lock
     hourly_prices = provider.get_prices(start_hour, start_hour + timedelta(hours=horizon_hours))
 
     planner: Planner = state.planner  # type: ignore[assignment]
