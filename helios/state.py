@@ -3,15 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from threading import RLock
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .config import HeliosSettings
 from .dwell import DwellController
 from .executor import Executor
 from .models import Plan
 from .providers import PriceProvider
-from .planner import Planner
-from .scheduler import HeliosScheduler
+
+if TYPE_CHECKING:
+    from .planner import Planner
+    from .scheduler import HeliosScheduler
 
 
 @dataclass

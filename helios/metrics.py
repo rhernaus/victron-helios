@@ -36,9 +36,7 @@ executor_apply_failures_total = Counter(
 )
 
 # Scheduler metrics
-recalc_job_runs_total = Counter(
-    "helios_recalc_job_runs_total", "Number of recalc job executions"
-)
+recalc_job_runs_total = Counter("helios_recalc_job_runs_total", "Number of recalc job executions")
 control_job_runs_total = Counter(
     "helios_control_job_runs_total", "Number of control job executions"
 )

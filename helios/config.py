@@ -20,6 +20,7 @@ class HeliosSettings(BaseSettings):
     dbus_update_interval_seconds: int = Field(default=10, ge=1)
     scheduler_timezone: str = Field(default="UTC")
     minimum_action_dwell_seconds: int = Field(default=0, ge=0)
+    log_level: str = Field(default="INFO")
 
     # Pricing adjustments
     price_provider: str = Field(default="stub")  # options: stub, tibber
@@ -46,6 +47,7 @@ class HeliosSettings(BaseSettings):
     location_lat: Optional[float] = None
     location_lon: Optional[float] = None
     tibber_token: Optional[str] = None
+    tibber_home_id: Optional[str] = None
     openweather_api_key: Optional[str] = None
 
     # Execution
