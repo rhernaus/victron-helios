@@ -9,7 +9,7 @@ from fastapi.responses import ORJSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from .config import ConfigUpdate, HeliosSettings
-from .executor import Executor, NoOpExecutor
+from .executor import DbusExecutor, Executor, NoOpExecutor
 from .metrics import (
     automation_paused,
     control_ticks_total,
@@ -18,19 +18,32 @@ from .metrics import (
 )
 from .models import ConfigResponse, Plan, StatusResponse
 from .planner import Planner
-from .providers import StubPriceProvider
+from .providers import StubPriceProvider, TibberPriceProvider
 from .scheduler import HeliosScheduler
 from .state import HeliosState, get_state
 
 logger = logging.getLogger("helios")
 
 
+def _select_price_provider(settings: HeliosSettings):
+    if settings.price_provider == "tibber" and settings.tibber_token:
+        return TibberPriceProvider(access_token=settings.tibber_token)
+    return StubPriceProvider()
+
+
+def _select_executor(settings: HeliosSettings, dwell) -> Executor:
+    if settings.executor_backend == "dbus":
+        return DbusExecutor(dwell=dwell)
+    return NoOpExecutor(dwell=dwell)
+
+
 def _recalc_plan(state: HeliosState) -> None:
-    # Retrieve price curve using provider abstraction (stub for now)
+    # Retrieve price curve using provider abstraction
     now = datetime.now(timezone.utc)
     start_hour = now.replace(minute=0, second=0, microsecond=0)
-    provider = StubPriceProvider()
-    hourly_prices = provider.get_prices(start_hour, start_hour + timedelta(hours=48))
+    provider = _select_price_provider(state.settings)
+    horizon_hours = state.settings.planning_horizon_hours
+    hourly_prices = provider.get_prices(start_hour, start_hour + timedelta(hours=horizon_hours))
 
     planner: Planner = state.planner  # type: ignore[assignment]
     plan: Plan = planner.build_plan(price_series=hourly_prices, now=now)
@@ -73,8 +86,10 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
         state.planner = Planner(state.settings)
     if state.scheduler is None:
         state.scheduler = HeliosScheduler(state)
+    # Ensure dwell uses configured minimum immediately
+    state.dwell.minimum_dwell_seconds = state.settings.minimum_action_dwell_seconds
     if state.executor is None:
-        state.executor = NoOpExecutor(dwell=state.dwell)
+        state.executor = _select_executor(state.settings, dwell=state.dwell)
 
     def recalc_job():
         _recalc_plan(state)
@@ -130,6 +145,10 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
             with state.lock:
                 new_settings = update.apply_to(state.settings)
                 state.settings = new_settings
+                # update dwell controller with new minimum dwell
+                state.dwell.minimum_dwell_seconds = new_settings.minimum_action_dwell_seconds
+                # swap executor if backend changed
+                state.executor = _select_executor(new_settings, dwell=state.dwell)
                 # reschedule with new intervals
                 scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
                 scheduler.reschedule(recalc_job=recalc_job, control_job=control_job)

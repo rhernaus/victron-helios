@@ -15,6 +15,7 @@ class HeliosSettings(BaseSettings):
 
     # Planning & control cadence
     planning_window_seconds: int = Field(default=900, ge=60)
+    planning_horizon_hours: int = Field(default=24, ge=1, le=48)
     recalculation_interval_seconds: int = Field(default=300, ge=30)
     dbus_update_interval_seconds: int = Field(default=10, ge=1)
     scheduler_timezone: str = Field(default="UTC")
@@ -76,6 +77,7 @@ class HeliosSettings(BaseSettings):
 
 class ConfigUpdate(BaseModel):
     planning_window_seconds: Optional[int] = None
+    planning_horizon_hours: Optional[int] = None
     recalculation_interval_seconds: Optional[int] = None
     dbus_update_interval_seconds: Optional[int] = None
     scheduler_timezone: Optional[str] = None

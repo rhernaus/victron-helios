@@ -34,3 +34,9 @@ def get_state() -> HeliosState:
     if _global_state is None:
         _global_state = HeliosState(settings=HeliosSettings())
     return _global_state
+
+
+def _reset_state_for_testing() -> None:
+    """Reset global state singleton. For test usage only."""
+    global _global_state
+    _global_state = None
