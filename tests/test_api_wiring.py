@@ -47,3 +47,96 @@ def test_config_put_updates_dwell_and_executor_backend():
         cfg = client.get("/config").json()["data"]
         assert cfg["minimum_action_dwell_seconds"] == 300
         assert cfg["executor_backend"] == "dbus"
+
+
+def test_tibber_provider_cache_persists_across_recalc(monkeypatch):
+    _reset_state_for_testing()
+    # Prepare a fake Tibber response and ensure only one HTTP call happens across two recalc windows
+    import httpx
+
+    from helios.api import create_app
+
+    calls = {"count": 0}
+
+    class DummyResp:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class DummyClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def post(self, url, json=None, headers=None):  # noqa: A002
+            calls["count"] += 1
+            # minimal valid payload for two days
+            from datetime import datetime, timedelta, timezone
+
+            now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+            today = [
+                {
+                    "startsAt": (now + timedelta(hours=h)).isoformat().replace("+00:00", "Z"),
+                    "total": 0.10,
+                }
+                for h in range(0, 24)
+            ]
+            tomorrow = [
+                {
+                    "startsAt": (now + timedelta(hours=24 + h)).isoformat().replace("+00:00", "Z"),
+                    "total": 0.20,
+                }
+                for h in range(0, 24)
+            ]
+            payload = {
+                "data": {
+                    "viewer": {
+                        "homes": [
+                            {
+                                "currentSubscription": {
+                                    "priceInfo": {"today": today, "tomorrow": tomorrow}
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+            return DummyResp(payload)
+
+    monkeypatch.setattr(httpx, "Client", DummyClient)
+
+    settings = HeliosSettings(
+        price_provider="tibber",
+        tibber_token="token",
+        planning_window_seconds=900,
+    )
+    app = create_app(initial_settings=settings)
+    with TestClient(app) as client:
+        # First plan generation
+        for _ in range(20):
+            r = client.get("/plan")
+            if r.status_code == 200:
+                break
+            time.sleep(0.05)
+        assert r.status_code == 200
+        # Force another recalc by hitting status and waiting briefly
+        client.get("/status")
+        for _ in range(20):
+            r = client.get("/plan")
+            if r.status_code == 200:
+                break
+            time.sleep(0.05)
+        assert r.status_code == 200
+
+    # Only one upstream call due to provider reuse + internal cache
+    assert calls["count"] == 1

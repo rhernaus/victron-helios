@@ -18,14 +18,14 @@ from .metrics import (
 )
 from .models import ConfigResponse, Plan, StatusResponse
 from .planner import Planner
-from .providers import StubPriceProvider, TibberPriceProvider
+from .providers import PriceProvider, StubPriceProvider, TibberPriceProvider
 from .scheduler import HeliosScheduler
 from .state import HeliosState, get_state
 
 logger = logging.getLogger("helios")
 
 
-def _select_price_provider(settings: HeliosSettings):
+def _select_price_provider(settings: HeliosSettings) -> PriceProvider:
     if settings.price_provider == "tibber" and settings.tibber_token:
         return TibberPriceProvider(access_token=settings.tibber_token)
     return StubPriceProvider()
@@ -41,7 +41,9 @@ def _recalc_plan(state: HeliosState) -> None:
     # Retrieve price curve using provider abstraction
     now = datetime.now(timezone.utc)
     start_hour = now.replace(minute=0, second=0, microsecond=0)
-    provider = _select_price_provider(state.settings)
+    # Reuse provider to preserve caches
+    provider = state.price_provider or _select_price_provider(state.settings)
+    state.price_provider = provider
     horizon_hours = state.settings.planning_horizon_hours
     hourly_prices = provider.get_prices(start_hour, start_hour + timedelta(hours=horizon_hours))
 
@@ -90,6 +92,8 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
     state.dwell.minimum_dwell_seconds = state.settings.minimum_action_dwell_seconds
     if state.executor is None:
         state.executor = _select_executor(state.settings, dwell=state.dwell)
+    if state.price_provider is None:
+        state.price_provider = _select_price_provider(state.settings)
 
     def recalc_job():
         _recalc_plan(state)
@@ -149,6 +153,8 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
                 state.dwell.minimum_dwell_seconds = new_settings.minimum_action_dwell_seconds
                 # swap executor if backend changed
                 state.executor = _select_executor(new_settings, dwell=state.dwell)
+                # swap provider if selection or token changed
+                state.price_provider = _select_price_provider(new_settings)
                 # reschedule with new intervals
                 scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
                 scheduler.reschedule(recalc_job=recalc_job, control_job=control_job)

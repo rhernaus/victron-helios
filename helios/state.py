@@ -9,6 +9,7 @@ from .config import HeliosSettings
 from .dwell import DwellController
 from .executor import Executor
 from .models import Plan
+from .providers import PriceProvider
 
 
 @dataclass
@@ -17,6 +18,7 @@ class HeliosState:
     scheduler: Optional[object] = None
     planner: Optional[object] = None
     executor: Optional[Executor] = None
+    price_provider: Optional[PriceProvider] = None
 
     latest_plan: Optional[Plan] = None
     last_recalc_at: Optional[datetime] = None
