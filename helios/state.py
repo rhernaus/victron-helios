@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
 from threading import RLock
+from typing import Optional
 
 from .config import HeliosSettings
-from .models import Plan
 from .dwell import DwellController
+from .executor import Executor
+from .models import Plan
 
 
 @dataclass
@@ -15,7 +16,7 @@ class HeliosState:
     settings: HeliosSettings
     scheduler: Optional[object] = None
     planner: Optional[object] = None
-    executor: Optional[object] = None
+    executor: Optional[Executor] = None
 
     latest_plan: Optional[Plan] = None
     last_recalc_at: Optional[datetime] = None

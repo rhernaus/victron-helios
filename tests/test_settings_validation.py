@@ -1,6 +1,6 @@
 import pytest
 
-from helios.config import HeliosSettings, ConfigUpdate
+from helios.config import ConfigUpdate, HeliosSettings
 
 
 def test_recalc_interval_must_be_leq_planning_window():

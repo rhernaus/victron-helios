@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
-from typing import Iterable, Optional
+from datetime import datetime, timedelta, timezone
+
 import httpx
 
 
@@ -29,12 +29,10 @@ class EVProvider(ABC):
         """Return EV status (SoC, charging state, at_home)."""
 
     @abstractmethod
-    def start_charging(self) -> None:
-        ...
+    def start_charging(self) -> None: ...
 
     @abstractmethod
-    def stop_charging(self) -> None:
-        ...
+    def stop_charging(self) -> None: ...
 
 
 @dataclass
@@ -87,11 +85,7 @@ class TibberPriceProvider(PriceProvider):
             resp = client.post(url, json=query, headers=headers)
             resp.raise_for_status()
             data = resp.json()
-        homes = (
-            data.get("data", {})
-            .get("viewer", {})
-            .get("homes", [])
-        )
+        homes = data.get("data", {}).get("viewer", {}).get("homes", [])
         if not homes:
             return []
         price_info = homes[0].get("currentSubscription", {}).get("priceInfo", {})
@@ -102,8 +96,11 @@ class TibberPriceProvider(PriceProvider):
             if starts_at is None or total is None:
                 continue
             try:
-                ts = datetime.fromisoformat(starts_at.replace("Z", "+00:00")).astimezone(timezone.utc)
-            except Exception:
+                ts = datetime.fromisoformat(starts_at.replace("Z", "+00:00")).astimezone(
+                    timezone.utc
+                )
+            except Exception:  # nosec B112
+                # Skip bad entries but keep processing other price points
                 continue
             series.append((ts, float(total)))
         # Filter to [start, end)
@@ -140,4 +137,3 @@ class StubEVProvider(EVProvider):
 
     def stop_charging(self) -> None:
         self.charging = False
-

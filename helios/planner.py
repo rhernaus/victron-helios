@@ -56,8 +56,9 @@ class Planner:
         # Simple heuristic:
         # - If grid sell enabled and price is high => export at max allowed; else idle
         # - If price is low => import/charge at max allowed
-        # In all cases obey configured grid limits and use settings-defined limits rather than hard-coded values.
-        # Apply buy/sell multipliers and hysteresis around pivot to reduce flapping.
+        # In all cases obey configured grid limits and use settings-defined
+        # limits rather than hard-coded values. Apply buy/sell multipliers and
+        # hysteresis around pivot to reduce flapping.
         import_limit = self.settings.grid_import_limit_w or 0
         export_limit = self.settings.grid_export_limit_w or 0
 
@@ -66,8 +67,14 @@ class Planner:
         setpoint = 0
 
         # Apply simple price adjustments for decision thresholding
-        buy_price = price_mid * self.settings.buy_price_multiplier + self.settings.buy_price_fixed_fee_eur_per_kwh
-        sell_price = price_mid * self.settings.sell_price_multiplier - self.settings.sell_price_fixed_deduction_eur_per_kwh
+        buy_price = (
+            price_mid * self.settings.buy_price_multiplier
+            + self.settings.buy_price_fixed_fee_eur_per_kwh
+        )
+        sell_price = (
+            price_mid * self.settings.sell_price_multiplier
+            - self.settings.sell_price_fixed_deduction_eur_per_kwh
+        )
 
         hysteresis = self.settings.price_hysteresis_eur_per_kwh
         cheap = buy_price <= (pivot - hysteresis)
@@ -75,7 +82,8 @@ class Planner:
 
         if cheap and import_limit > 0:
             action = Action.CHARGE_FROM_GRID
-            # Use configured limit; planner may later incorporate battery charge limit and pricing formulas
+            # Use configured limit; planner may later incorporate battery
+            # charge limit and pricing formulas
             setpoint = import_limit
         elif self.settings.grid_sell_enabled and expensive and export_limit > 0:
             action = Action.EXPORT_TO_GRID

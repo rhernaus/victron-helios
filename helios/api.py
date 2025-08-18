@@ -1,21 +1,26 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import logging
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import ORJSONResponse
-import logging
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from .config import ConfigUpdate, HeliosSettings
+from .executor import Executor, NoOpExecutor
+from .metrics import (
+    automation_paused,
+    control_ticks_total,
+    current_setpoint_watts,
+    planner_runs_total,
+)
 from .models import ConfigResponse, Plan, StatusResponse
 from .planner import Planner
+from .providers import StubPriceProvider
 from .scheduler import HeliosScheduler
 from .state import HeliosState, get_state
-from .providers import StubPriceProvider
-from .executor import NoOpExecutor, Executor
-from .metrics import planner_runs_total, control_ticks_total, current_setpoint_watts, automation_paused
 
 logger = logging.getLogger("helios")
 
@@ -108,8 +113,9 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
     @app.get("/metrics")
     def metrics() -> ORJSONResponse:
         data = generate_latest()
-        # Return a raw Response with the correct content type; ORJSONResponse can't set bytes directly
+        # Return a raw Response with the correct content type
         from fastapi import Response
+
         return Response(content=data, media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/config", response_model=ConfigResponse)
@@ -129,7 +135,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
                 scheduler.reschedule(recalc_job=recalc_job, control_job=control_job)
                 return ConfigResponse(data=state.settings.to_public_dict())
         except Exception as exc:  # validation or other issues
-            raise HTTPException(status_code=400, detail=str(exc))
+            raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.get("/status", response_model=StatusResponse)
     def status() -> StatusResponse:

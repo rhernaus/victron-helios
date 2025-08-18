@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime
 import logging
 
-from .models import Plan
 from .dwell import DwellController
+from .models import Plan
 
 logger = logging.getLogger("helios")
 
@@ -35,4 +35,3 @@ class NoOpExecutor(Executor):
             slot.action.value,
             when.isoformat(),
         )
-

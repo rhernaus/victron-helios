@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import model_validator
 
 
 class HeliosSettings(BaseSettings):
@@ -61,12 +60,10 @@ class HeliosSettings(BaseSettings):
         return data
 
     @model_validator(mode="after")
-    def _validate_invariants(self) -> "HeliosSettings":
+    def _validate_invariants(self) -> HeliosSettings:
         # Recalc interval must be <= planning window
         if self.recalculation_interval_seconds > self.planning_window_seconds:
-            raise ValueError(
-                "recalculation_interval_seconds must be <= planning_window_seconds"
-            )
+            raise ValueError("recalculation_interval_seconds must be <= planning_window_seconds")
         # SoC bounds sanity
         if not (0 <= self.min_soc_percent <= self.max_soc_percent <= 100):
             raise ValueError("SoC bounds must satisfy 0 <= min <= max <= 100")

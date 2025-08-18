@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 from .models import Action
@@ -27,4 +27,3 @@ class DwellController:
         if self.last_action != action:
             self.last_action = action
             self.last_action_at = now
-
