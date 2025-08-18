@@ -9,3 +9,4 @@ Current endpoints:
 - `GET /plan`: returns the latest plan (404 if not ready)
 - `POST /pause`: pause automation
 - `POST /resume`: resume automation
+- `GET /metrics`: Prometheus metrics

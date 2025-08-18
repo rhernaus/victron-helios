@@ -6,56 +6,54 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import ORJSONResponse
 import logging
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from .config import ConfigUpdate, HeliosSettings
 from .models import ConfigResponse, Plan, StatusResponse
 from .planner import Planner
 from .scheduler import HeliosScheduler
 from .state import HeliosState, get_state
+from .providers import StubPriceProvider
+from .executor import NoOpExecutor, Executor
+from .metrics import planner_runs_total, control_ticks_total, current_setpoint_watts, automation_paused
 
 logger = logging.getLogger("helios")
 
 
 def _recalc_plan(state: HeliosState) -> None:
-    # Stub price curve: 48h hourly prices with a gentle daily swing
+    # Retrieve price curve using provider abstraction (stub for now)
     now = datetime.now(timezone.utc)
     start_hour = now.replace(minute=0, second=0, microsecond=0)
-    hourly_prices: list[tuple[datetime, float]] = []
-    for h in range(0, 48):
-        t = start_hour + timedelta(hours=h)
-        # simple 24h sawtooth between 0.15 and 0.35 EUR/kWh
-        base = 0.25
-        amplitude = 0.10
-        phase = (h % 24) / 24.0
-        price = base + amplitude * (2 * phase - 1)
-        hourly_prices.append((t, round(price, 4)))
+    provider = StubPriceProvider()
+    hourly_prices = provider.get_prices(start_hour, start_hour + timedelta(hours=48))
 
     planner: Planner = state.planner  # type: ignore[assignment]
     plan: Plan = planner.build_plan(price_series=hourly_prices, now=now)
     with state.lock:
         state.latest_plan = plan
         state.last_recalc_at = now
+    planner_runs_total.inc()
 
 
 def _do_control(state: HeliosState) -> None:
     now = datetime.now(timezone.utc)
+    # Skip if paused
     with state.lock:
         state.last_control_at = now
+        paused = state.automation_paused
         plan = state.latest_plan
-        if plan is None:
-            return
-        slot = plan.slot_for(now)
-        if slot is None:
-            return
-        setpoint = slot.target_grid_setpoint_w
-        action = slot.action
-    # Outside lock, perform side-effects (would be D-Bus calls). Here we just log.
-    logger.info(
-        "Control tick %s: applying setpoint W=%s action=%s",
-        now.isoformat(),
-        setpoint,
-        action.value,
-    )
+    automation_paused.set(1 if paused else 0)
+    if paused:
+        return
+    if plan is None:
+        return
+    # Apply via executor abstraction
+    executor: Executor = state.executor or NoOpExecutor()
+    executor.apply_setpoint(now, plan)
+    slot = plan.slot_for(now)
+    if slot is not None:
+        current_setpoint_watts.set(slot.target_grid_setpoint_w)
+    control_ticks_total.inc()
 
 
 def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
@@ -70,6 +68,8 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
         state.planner = Planner(state.settings)
     if state.scheduler is None:
         state.scheduler = HeliosScheduler(state)
+    if state.executor is None:
+        state.executor = NoOpExecutor()
 
     def recalc_job():
         _recalc_plan(state)
@@ -104,6 +104,13 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
         with state.lock:
             state.automation_paused = False
         return status()
+
+    @app.get("/metrics")
+    def metrics() -> ORJSONResponse:
+        data = generate_latest()
+        # Return a raw Response with the correct content type; ORJSONResponse can't set bytes directly
+        from fastapi import Response
+        return Response(content=data, media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/config", response_model=ConfigResponse)
     def get_config() -> ConfigResponse:

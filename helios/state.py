@@ -7,6 +7,7 @@ from threading import RLock
 
 from .config import HeliosSettings
 from .models import Plan
+from .dwell import DwellController
 
 
 @dataclass
@@ -21,6 +22,7 @@ class HeliosState:
     last_control_at: Optional[datetime] = None
     automation_paused: bool = False
     lock: RLock = field(default_factory=RLock)
+    dwell: DwellController = field(default_factory=lambda: DwellController(minimum_dwell_seconds=0))
 
 
 _global_state: Optional[HeliosState] = None
