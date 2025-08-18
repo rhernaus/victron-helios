@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import logging
 
+from .config import HeliosSettings
 from .dwell import DwellController
 from .metrics import executor_apply_failures_total, executor_apply_seconds
 from .models import Plan
@@ -42,6 +43,7 @@ class NoOpExecutor(Executor):
 @dataclass
 class DbusExecutor(Executor):
     dwell: DwellController | None = None
+    settings: HeliosSettings | None = None
 
     def apply_setpoint(self, when: datetime, plan: Plan) -> None:
         slot = plan.slot_for(when)
@@ -51,15 +53,35 @@ class DbusExecutor(Executor):
             return
         if self.dwell is not None:
             self.dwell.note_action(slot.action, when)
-        # Placeholder for future D-Bus integration
+        # Real D-Bus integration
         try:
             with executor_apply_seconds.time():
-                logger.info(
-                    "DbusExecutor would set grid setpoint W=%s action=%s at=%s",
-                    slot.target_grid_setpoint_w,
-                    slot.action.value,
-                    when.isoformat(),
-                )
+                target = slot.target_grid_setpoint_w
+                # Clamp by settings limits if provided
+                if self.settings is not None:
+                    if self.settings.grid_import_limit_w is not None:
+                        target = min(target, self.settings.grid_import_limit_w)
+                    if self.settings.grid_export_limit_w is not None:
+                        target = max(target, -self.settings.grid_export_limit_w)
+                try:
+                    import dbus  # type: ignore
+
+                    bus = dbus.SystemBus()
+                    proxy = bus.get_object(
+                        "com.victronenergy.settings", "/Settings/CGwacs/AcPowerSetPoint"
+                    )
+                    try:
+                        iface = dbus.Interface(proxy, dbus_interface="com.victronenergy.BusItem")
+                        iface.SetValue(int(target))
+                    except Exception:
+                        props = dbus.Interface(
+                            proxy, dbus_interface="org.freedesktop.DBus.Properties"
+                        )
+                        props.Set("com.victronenergy.BusItem", "Value", int(target))
+                    logger.info("DbusExecutor set grid setpoint to %s W", int(target))
+                except Exception as dbus_exc:  # nosec B112
+                    logger.error("D-Bus write failed: %s", dbus_exc)
+                    raise
         except Exception:
             executor_apply_failures_total.inc()
             raise

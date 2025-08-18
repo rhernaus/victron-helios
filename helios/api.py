@@ -39,7 +39,7 @@ def _select_price_provider(settings: HeliosSettings) -> PriceProvider:
 
 def _select_executor(settings: HeliosSettings, dwell) -> Executor:
     if settings.executor_backend == "dbus":
-        return DbusExecutor(dwell=dwell)
+        return DbusExecutor(dwell=dwell, settings=settings)
     return NoOpExecutor(dwell=dwell)
 
 
@@ -119,6 +119,15 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
     state = get_state()
     if initial_settings is not None:
         state.settings = initial_settings
+    else:
+        # Attempt to load persisted settings (sanitized) and overlay on defaults
+        loaded = HeliosSettings.load_from_disk(HeliosSettings().data_dir)
+        if loaded:
+            try:
+                merged = {**state.settings.model_dump(), **loaded}
+                state.settings = HeliosSettings.model_validate(merged)
+            except Exception:  # nosec B112
+                logger.warning("Failed to load settings from disk; using defaults")
 
     # Initialize planner and scheduler if not already
     if state.planner is None:
@@ -210,6 +219,11 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
                 # reschedule with new intervals
                 scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
                 scheduler.reschedule(recalc_job=recalc_job, control_job=control_job)
+                # persist non-secret settings snapshot to disk
+                try:
+                    state.settings.persist_to_disk()
+                except Exception:  # nosec B112
+                    logger.warning("Failed to persist settings to disk")
                 return ConfigResponse(data=state.settings.to_public_dict())
         except Exception as exc:  # validation or other issues
             raise HTTPException(status_code=400, detail=str(exc)) from None
