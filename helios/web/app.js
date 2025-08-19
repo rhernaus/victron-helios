@@ -451,11 +451,9 @@ function formatLocalDate(d) {
 function drawHourTicks(ctx, x, tmin, tmax, H, padL, padR) {
   const hour = 3600_000;
   let t = Math.ceil(tmin / hour) * hour;
-  const pxHour = (x(t + hour) - x(t)) || 0;
-  const step = pxHour < 36 ? 2 * hour : hour;
   ctx.fillStyle = 'rgba(255,255,255,.6)';
   ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
+  ctx.textBaseline = 'top';
   ctx.font = '12px system-ui, sans-serif';
   ctx.strokeStyle = 'rgba(255,255,255,.06)';
   ctx.lineWidth = 1;
@@ -464,15 +462,12 @@ function drawHourTicks(ctx, x, tmin, tmax, H, padL, padR) {
     ctx.beginPath(); ctx.moveTo(tx, 10); ctx.lineTo(tx, H - 24); ctx.stroke();
     const d = new Date(t);
     const isMidnight = d.getHours() === 0;
-    const idx = Math.round((t - Math.ceil(tmin/hour)*hour) / hour);
-    if (isMidnight || (idx % (step/hour) === 0)) {
-      const label = isMidnight ? formatLocalDate(d) : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
-      ctx.save();
-      ctx.translate(tx, H - 8);
-      ctx.rotate(-Math.PI / 4);
-      ctx.fillText(label, 4, 0);
-      ctx.restore();
-    }
+    const label = isMidnight ? formatLocalDate(d) : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
+    ctx.save();
+    ctx.translate(tx, H); // place below the axis
+    ctx.rotate(-Math.PI / 4);
+    ctx.fillText(label, 4, 0);
+    ctx.restore();
   }
 }
 
