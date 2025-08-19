@@ -495,21 +495,24 @@ function drawPriceChart(canvas, prices, domainOverride) {
   let tmin = items.length ? new Date(items[0].t).getTime() : Date.now();
   let tmax = items.length ? new Date(items[items.length-1].t).getTime() + 3600_000 : tmin + 3600_000;
   if (domainOverride) { tmin = domainOverride[0]; tmax = domainOverride[1]; }
-  const ymin = Math.min(0, ...items.map(i => Math.min(i.buy ?? i.raw, i.sell ?? i.raw)));
-  const ymax = Math.max(0.01, ...items.map(i => Math.max(i.buy ?? i.raw, i.sell ?? i.raw)));
+  let ymin = Math.min(0, ...items.map(i => Math.min(i.buy ?? i.raw, i.sell ?? i.raw)));
+  let ymax = Math.max(0.01, ...items.map(i => Math.max(i.buy ?? i.raw, i.sell ?? i.raw)));
+  // add headroom and footroom (5%)
+  const ypad = (ymax - ymin) * 0.05 || 0.5;
+  ymin -= ypad; ymax += ypad;
   const x = makeScale(tmin, tmax, padL, W - padR);
   const y = makeScale(ymin, ymax, H - padB, padT);
   drawAxes(ctx, W, H, y(0));
 
   // gridlines and Y labels
   ctx.strokeStyle = 'rgba(255,255,255,.06)';
-  for (let g = 0; g <= 4; g++) {
+  for (let g = 0; g <= 5; g++) {
     const gy = y(ymin + (ymax - ymin) * g / 4);
     ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(W - padR, gy); ctx.stroke();
     ctx.fillStyle = 'rgba(255,255,255,.6)';
     ctx.font = '12px system-ui, sans-serif';
     ctx.textAlign = 'right';
-    ctx.fillText('€' + (ymin + (ymax - ymin) * g / 4).toFixed(2), padL - 6, gy + 4);
+    ctx.fillText('€' + (ymin + (ymax - ymin) * g / 5).toFixed(2), padL - 6, gy + 4);
   }
 
   function drawLine(key, color) {
@@ -565,10 +568,23 @@ function drawPriceChart(canvas, prices, domainOverride) {
     }
     if (!nearest || best > 30) return null;
     const tt = new Date(nearest.t);
+    const tx = x(new Date(nearest.t).getTime());
+    const band = document.getElementById('chart-hoverband');
+    if (band) {
+      const rect = canvas.getBoundingClientRect();
+      const hourW = Math.abs(x(tt.getTime()+3600_000) - x(tt.getTime()));
+      band.style.left = `${rect.left + tx - hourW/2}px`;
+      band.style.top = `${rect.top + 10}px`;
+      band.style.width = `${hourW}px`;
+      band.style.height = `${H - 34}px`;
+      band.hidden = false;
+    }
+    const labelStart = tt.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
+    const labelEnd = new Date(tt.getTime()+3600_000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
     return {
-      x: x(new Date(nearest.t).getTime()),
+      x: tx,
       y: my,
-      html: `${tt.toLocaleString()}<br>Buy: <b>${(nearest.buy ?? nearest.raw).toFixed(3)}</b><br>Sell: <b>${(nearest.sell ?? nearest.raw).toFixed(3)}</b>`
+      html: `${labelStart}–${labelEnd}<br>Buy: <b>${(nearest.buy ?? nearest.raw).toFixed(3)}</b><br>Sell: <b>${(nearest.sell ?? nearest.raw).toFixed(3)}</b>`
     };
   });
 }
@@ -582,8 +598,8 @@ function drawEnergyChart(canvas, plan, domainOverride) {
   let [tmin, tmax] = timeDomainFromPlan(plan);
   if (domainOverride) { tmin = domainOverride[0]; tmax = domainOverride[1]; }
   const x = makeScale(tmin, tmax, padL, W - padR);
-  const ymin = -1; // dynamic below
-  const ymax = 1;
+  let ymin = -1; // dynamic below
+  let ymax = 1;
 
   // Build stacked series per slot using annotated energy flows from the plan
   const slotSecs = plan.planning_window_seconds || 900;
@@ -614,7 +630,11 @@ function drawEnergyChart(canvas, plan, domainOverride) {
 
   const vmax = Math.max(0.01, ...bars.map(b => streams.reduce((acc, st) => acc + (st.sign > 0 ? b[st.key] : 0), 0)));
   const vmin = -Math.max(0.01, ...bars.map(b => streams.reduce((acc, st) => acc + (st.sign < 0 ? b[st.key] : 0), 0)));
-  const y = makeScale(vmin, vmax, H - padB, padT);
+  // add head/foot room
+  const ypadE = (vmax - vmin) * 0.05 || 0.05;
+  const yMinE = vmin - ypadE;
+  const yMaxE = vmax + ypadE;
+  const y = makeScale(yMinE, yMaxE, H - padB, padT);
   drawAxes(ctx, W, H, y(0));
   // Y-axis labels
   ctx.fillStyle = 'rgba(255,255,255,.7)';
@@ -676,6 +696,19 @@ function drawEnergyChart(canvas, plan, domainOverride) {
     const b = bars[idx];
     if (!b) return null;
     const t = new Date(b.t);
+    // hover band
+    const band = document.getElementById('chart-hoverband');
+    if (band) {
+      const rect = canvas.getBoundingClientRect();
+      const barSpace = (W - padL - padR) / bars.length;
+      band.style.left = `${rect.left + padL + idx * barSpace}px`;
+      band.style.top = `${rect.top + 10}px`;
+      band.style.width = `${barSpace}px`;
+      band.style.height = `${H - 34}px`;
+      band.hidden = false;
+    }
+    const labelStart = t.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
+    const labelEnd = new Date(b.t + (slotSecs*1000)).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
     const lines = [
       `From battery to grid: <b>${(b.batt_grid).toFixed(3)} kWh</b>`,
       `From solar to grid: <b>${(b.solar_grid).toFixed(3)} kWh</b>`,
@@ -688,7 +721,7 @@ function drawEnergyChart(canvas, plan, domainOverride) {
     return {
       x: x(b.t) + barW/2,
       y: my,
-      html: `${t.toLocaleString()}<br>${lines.join('<br>')}`
+      html: `${labelStart}–${labelEnd}<br>${lines.join('<br>')}`
     };
   });
 }
@@ -738,15 +771,16 @@ function drawCostsChart(canvas, plan, prices, domainOverride) {
   const vmax = Math.max(0.01, ...bars.map(b => b.gridSave));
   const vmin = -Math.max(0.01, ...bars.map(b => Math.max(b.gridCost, b.battCost)));
   const x = makeScale(tmin, tmax, padL, W - padR);
-  const y = makeScale(vmin, vmax, H - padB, padT);
+  const ypadC = (vmax - vmin) * 0.05 || 0.05;
+  const y = makeScale(vmin - ypadC, vmax + ypadC, H - padB, padT);
   drawAxes(ctx, W, H, y(0));
-  // Y-axis labels
+  // Y-axis labels with extra grid line
   ctx.fillStyle = 'rgba(255,255,255,.7)';
   ctx.font = '12px system-ui, sans-serif';
   ctx.textAlign = 'right';
-  const yTicks2 = 4;
+  const yTicks2 = 5;
   for (let g = 0; g <= yTicks2; g++) {
-    const val = vmin + (vmax - vmin) * g / yTicks2;
+    const val = (vmin - ypadC) + ((vmax - vmin + 2*ypadC) * g / yTicks2);
     const gy = y(val);
     ctx.fillText('€' + val.toFixed(2), 34, gy + 4);
   }
@@ -787,10 +821,22 @@ function drawCostsChart(canvas, plan, prices, domainOverride) {
     const b = bars[idx];
     if (!b) return null;
     const t = new Date(b.t);
+    const band = document.getElementById('chart-hoverband');
+    if (band) {
+      const rect = canvas.getBoundingClientRect();
+      const barSpace = (W - padL - padR) / bars.length;
+      band.style.left = `${rect.left + padL + idx * barSpace}px`;
+      band.style.top = `${rect.top + 10}px`;
+      band.style.width = `${barSpace}px`;
+      band.style.height = `${H - 34}px`;
+      band.hidden = false;
+    }
+    const labelStart = t.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
+    const labelEnd = new Date(b.t + slotSecs*1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
     return {
       x: x(b.t) + barW/2,
       y: my,
-      html: `${t.toLocaleString()}<br>Grid cost: <b>€${b.gridCost.toFixed(2)}</b><br>Grid savings: <b>€${b.gridSave.toFixed(2)}</b><br>Battery cost: <b>€${b.battCost.toFixed(2)}</b>`
+      html: `${labelStart}–${labelEnd}<br>Grid cost: <b>€${b.gridCost.toFixed(2)}</b><br>Grid savings: <b>€${b.gridSave.toFixed(2)}</b><br>Battery cost: <b>€${b.battCost.toFixed(2)}</b>`
     };
   });
 }
@@ -799,6 +845,7 @@ function drawCostsChart(canvas, plan, prices, domainOverride) {
 function attachHover(canvas, compute) {
   if (!canvas) return;
   const tip = document.getElementById('chart-tooltip');
+  const band = document.getElementById('chart-hoverband');
   if (!tip) return;
   let over = false;
   const show = (evt) => {
@@ -813,6 +860,6 @@ function attachHover(canvas, compute) {
     tip.hidden = false;
   };
   canvas.addEventListener('mousemove', show);
-  canvas.addEventListener('mouseleave', () => { tip.hidden = true; });
+  canvas.addEventListener('mouseleave', () => { tip.hidden = true; if (band) band.hidden = true; });
 }
 
