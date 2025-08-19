@@ -150,7 +150,8 @@ class Planner:
                 slot.solar_to_grid_kwh = from_solar
             batt_to_grid = max(0.0, kwh - from_solar)
             slot.battery_to_grid_kwh = batt_to_grid
-            throughput = kwh / max(1e-6, eff)
+            # Only apply degradation to the portion that actually cycled through the battery
+            throughput = batt_to_grid / max(1e-6, eff)
             degradation = throughput * cycle_cost
             slot.battery_cost_eur = degradation
             slot.grid_savings_eur = kwh * sell
