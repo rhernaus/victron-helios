@@ -5,7 +5,9 @@ import logging
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from .config import ConfigUpdate, HeliosSettings
@@ -328,5 +330,18 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                 (datetime.now(timezone.utc) - state.latest_plan.generated_at).total_seconds()
             )
             return state.latest_plan.model_dump()
+
+    # --- Web UI mounting ---
+    try:
+        web_dir = Path(__file__).resolve().parent / "web"
+        if web_dir.exists():
+            app.mount("/ui", StaticFiles(directory=str(web_dir), html=True), name="ui")
+
+            @app.get("/")
+            def root_redirect() -> RedirectResponse:
+                return RedirectResponse(url="/ui/")
+    except Exception:
+        # If static mounting fails for any reason, continue serving API only
+        logger.warning("Web UI mounting failed; continuing without UI")
 
     return app

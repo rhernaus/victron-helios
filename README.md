@@ -97,3 +97,14 @@ uvicorn main:app --host 127.0.0.1 --port 8080 &
 - Data and configuration live under `/data/helios` (e.g., `/data/helios/settings.yaml`).
 - Ensure D-Bus write access to `/Settings/CGwacs/AcPowerSetPoint` for ESS control.
 - Note: `uvicorn[standard]` extras are not required on device; plain `uvicorn` is sufficient.
+
+### Web UI
+
+- A built-in web interface is served at `/ui`.
+- If you bind Uvicorn to all interfaces, you can browse: `http://<CERBO_IP>:8080/ui/`.
+- The UI provides:
+  - Status and health
+  - Plan viewer with auto-refresh
+  - Configuration editor (quick fields and full key/value)
+  - Pause/Resume controls
+  - Metrics viewer and link to raw `/metrics`
