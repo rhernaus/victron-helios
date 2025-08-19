@@ -45,14 +45,15 @@ class OpenWeatherForecastProvider(ForecastProvider):
         return [start + timedelta(hours=h) for h in range(hours + 1)]
 
     def _owm_hourly(self) -> list[dict]:
+        # One Call API 3.0: include hourly forecast for next 48h
         url = (
-            f"https://api.openweathermap.org/data/2.5/forecast?lat={self.lat}&lon={self.lon}&appid={self.api_key}&units=metric"
+            f"https://api.openweathermap.org/data/3.0/onecall?lat={self.lat}&lon={self.lon}&appid={self.api_key}&units=metric&exclude=minutely,current,daily,alerts"
         )
         with httpx.Client(timeout=10) as client:
             resp = client.get(url)
             resp.raise_for_status()
             data = resp.json()
-        return data.get("list", [])
+        return data.get("hourly", [])
 
     def _estimate_pv_from_clouds(self, cloud_percent: float) -> float:
         # Simple mapping: clear sky ~ 1.0, fully overcast ~ 0.15 of peak
@@ -68,7 +69,8 @@ class OpenWeatherForecastProvider(ForecastProvider):
         series: list[tuple[datetime, float]] = []
         for item in hourly:
             ts = item.get("dt")
-            clouds = (item.get("clouds", {}) or {}).get("all")
+            # One Call hourly has clouds as integer percent at top level
+            clouds = item.get("clouds")
             if ts is None or clouds is None:
                 continue
             t = datetime.fromtimestamp(int(ts), tz=timezone.utc)

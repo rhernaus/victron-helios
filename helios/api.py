@@ -511,6 +511,59 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
 
         return {"generated_at": now.isoformat(), "start": start_hour.isoformat(), "items": items}
 
+    @app.get("/export")
+    def export_series() -> dict:
+        """Export prices, flows and costs for the current plan window.
+
+        Returns a compact JSON with aligned time slots for downstream analysis.
+        """
+        with state.lock:
+            plan = state.latest_plan
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Plan not ready")
+
+        # prices for window
+        try:
+            settings_snapshot = state.settings
+            provider = state.price_provider or _select_price_provider(settings_snapshot)
+            start = plan.slots[0].start if plan.slots else plan.generated_at
+            end = plan.slots[-1].end if plan.slots else plan.generated_at
+            price_series = provider.get_prices(start, end)
+        except Exception:
+            price_series = []
+
+        slot_items = []
+        for s in plan.slots:
+            slot_items.append(
+                {
+                    "start": s.start.isoformat(),
+                    "end": s.end.isoformat(),
+                    "action": s.action,
+                    "setpoint_w": s.target_grid_setpoint_w,
+                    "flows": {
+                        "solar_to_grid_kwh": s.solar_to_grid_kwh,
+                        "solar_to_battery_kwh": s.solar_to_battery_kwh,
+                        "solar_to_usage_kwh": s.solar_to_usage_kwh,
+                        "battery_to_grid_kwh": s.battery_to_grid_kwh,
+                        "battery_to_usage_kwh": s.battery_to_usage_kwh,
+                        "grid_to_usage_kwh": s.grid_to_usage_kwh,
+                        "grid_to_battery_kwh": s.grid_to_battery_kwh,
+                    },
+                    "costs": {
+                        "grid_cost_eur": s.grid_cost_eur,
+                        "grid_savings_eur": s.grid_savings_eur,
+                        "battery_cost_eur": s.battery_cost_eur,
+                    },
+                }
+            )
+
+        prices = [
+            {"t": t.isoformat(), "raw": p}
+            for (t, p) in price_series
+        ]
+
+        return {"plan_generated_at": plan.generated_at.isoformat(), "slots": slot_items, "prices": prices}
+
     # --- Web UI mounting ---
     try:
         web_dir = Path(__file__).resolve().parent / "web"

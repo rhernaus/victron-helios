@@ -447,6 +447,25 @@ function drawPriceChart(canvas, prices) {
     <div class="key"><span class="swatch" style="background:#ef4444"></span> buy price</div>
     <div class="key"><span class="swatch" style="background:#84cc16"></span> sell price</div>
   `;
+
+  // Hover tooltip
+  attachHover(canvas, (mx, my) => {
+    // find nearest hour
+    let nearest = null;
+    let best = Infinity;
+    for (const it of items) {
+      const tt = new Date(it.t).getTime();
+      const dx = Math.abs(mx - x(tt));
+      if (dx < best) { best = dx; nearest = it; }
+    }
+    if (!nearest || best > 30) return null;
+    const tt = new Date(nearest.t);
+    return {
+      x: x(new Date(nearest.t).getTime()),
+      y: my,
+      html: `${tt.toLocaleString()}<br>Buy: <b>${(nearest.buy ?? nearest.raw).toFixed(3)}</b><br>Sell: <b>${(nearest.sell ?? nearest.raw).toFixed(3)}</b>`
+    };
+  });
 }
 
 function drawEnergyChart(canvas, plan) {
@@ -540,6 +559,29 @@ function drawEnergyChart(canvas, plan) {
     const label = new Date(bars[i].t).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
     ctx.fillText(label, tx + barW/2, H - 8);
   }
+
+  // Hover tooltip (stacked totals)
+  attachHover(canvas, (mx, my) => {
+    // map x to bar index
+    const idx = Math.round((mx - padL) / ((W - padL - padR) / bars.length));
+    const b = bars[idx];
+    if (!b) return null;
+    const t = new Date(b.t);
+    const lines = [
+      `From battery to grid: <b>${(b.batt_grid).toFixed(3)} kWh</b>`,
+      `From solar to grid: <b>${(b.solar_grid).toFixed(3)} kWh</b>`,
+      `From solar to battery: <b>${(b.solar_batt).toFixed(3)} kWh</b>`,
+      `From solar to usage: <b>${(b.solar_use).toFixed(3)} kWh</b>`,
+      `From battery to usage: <b>${(b.batt_use).toFixed(3)} kWh</b>`,
+      `From grid to usage: <b>${(b.grid_use).toFixed(3)} kWh</b>`,
+      `From grid to battery: <b>${(b.grid_batt).toFixed(3)} kWh</b>`,
+    ];
+    return {
+      x: x(b.t) + barW/2,
+      y: my,
+      html: `${t.toLocaleString()}<br>${lines.join('<br>')}`
+    };
+  });
 }
 
 function drawCostsChart(canvas, plan, prices) {
@@ -625,5 +667,39 @@ function drawCostsChart(canvas, plan, prices) {
     const label = new Date(bars[i].t).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
     ctx.fillText(label, tx + barW/2, H - 8);
   }
+
+  // Hover tooltip
+  attachHover(canvas, (mx, my) => {
+    const idx = Math.round((mx - padL) / ((W - padL - padR) / bars.length));
+    const b = bars[idx];
+    if (!b) return null;
+    const t = new Date(b.t);
+    return {
+      x: x(b.t) + barW/2,
+      y: my,
+      html: `${t.toLocaleString()}<br>Grid cost: <b>€${b.gridCost.toFixed(2)}</b><br>Grid savings: <b>€${b.gridSave.toFixed(2)}</b><br>Battery cost: <b>€${b.battCost.toFixed(2)}</b>`
+    };
+  });
+}
+
+// Attach hover helper to a canvas; cb returns {x,y,html} or null
+function attachHover(canvas, compute) {
+  if (!canvas) return;
+  const tip = document.getElementById('chart-tooltip');
+  if (!tip) return;
+  let over = false;
+  const show = (evt) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = evt.clientX - rect.left;
+    const my = evt.clientY - rect.top;
+    const res = compute(mx, my);
+    if (!res) { tip.hidden = true; return; }
+    tip.innerHTML = res.html;
+    tip.style.left = `${evt.clientX + 12}px`;
+    tip.style.top = `${evt.clientY + 12}px`;
+    tip.hidden = false;
+  };
+  canvas.addEventListener('mousemove', show);
+  canvas.addEventListener('mouseleave', () => { tip.hidden = true; });
 }
 
