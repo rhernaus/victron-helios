@@ -28,11 +28,12 @@
 
 - **Forecasting**
   - Solar production forecast:
-    - Learn from historical GX PV data
-    - Optional external forecast integration (Solcast or OpenWeatherMap)
-    - Auto-detect location from GX; allow manual lat/lon override
+    - [DONE] Basic external forecast via OpenWeather One Call 3.0 (clouds → PV) using `HELIOS_OPENWEATHER_API_KEY` and location
+    - Learn from historical GX PV data; blend with external forecast
+    - Clear-sky model and plane-of-array correction for improved accuracy
   - Household consumption forecast:
-    - Learn baseload + daily/weekly patterns from historical GX data
+    - Learn baseload + daily/weekly patterns from historical GX data stored in local SQLite
+    - Add model training job and persistence
 
 - **EV integrations**
   - Tesla API: read SoC/charging status/location; start/stop charging; geofence home
@@ -49,10 +50,13 @@
   - Analytics: historical savings, ROI (optional battery cost), export graphs
   - Manual controls: force modes (charge/discharge/idle) with safety guards; pause/resume implemented
   - Authentication/authorization for UI (optional; local-only default)
+  - [DONE] Plan charts: energy prices, energy management (stacked flows), costs & savings
+  - [DONE] Hover tooltips and axes labels
 
 - **Persistence & storage**
   - Persist configuration (including secrets) securely on device
-  - Store time-series telemetry and plan history for analytics and model training
+  - [DONE] Store time-series telemetry (SQLite) for analytics and model training
+  - Export plan data via API for offline analysis (`GET /export`)
   - Implement `.env`/YAML config writer under `/data/helios` and load-on-start; avoid returning secrets via API
   - Ensure secure file permissions for secrets at rest
 
@@ -89,10 +93,10 @@
 
 - **Documentation**
   - User guide for configuration and UI
-  - Provider setup (Tibber, weather APIs, EV APIs)
+  - Provider setup (Tibber, OpenWeather One Call), EV APIs
   - Architecture and extension points (modular providers, forecast engines)
   - Cerbo GX setup guide: D-Bus permissions, `/data` layout, startup via `/data/rc.local`
-  - README updated for configuration options (planning horizon, provider/executor selection)
+  - [DONE] README updated for configuration options and new endpoints/charts
 
 - **Developer experience & CI**
   - Pre-commit hooks for ruff and black
