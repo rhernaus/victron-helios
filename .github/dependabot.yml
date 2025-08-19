@@ -9,34 +9,7 @@ updates:
     directory: "/" # Location of Python requirements (requirements*.txt, pyproject)
     schedule:
       interval: "daily"
-    groups:
-      prod-deps:
-        patterns:
-          - "fastapi"
-          - "uvicorn"
-          - "pydantic*"
-          - "pydantic-settings"
-          - "httpx"
-          - "PyYAML"
-          - "python-dotenv"
-          - "tenacity"
-          - "apscheduler"
-          - "prometheus-client"
-      dev-deps:
-        patterns:
-          - "black"
-          - "ruff"
-          - "isort"
-          - "mypy"
-          - "types-*"
-          - "bandit"
-          - "pytest"
-          - "pytest-*"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "daily"
-    groups:
-      actions:
-        patterns:
-          - "*"
