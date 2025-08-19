@@ -173,6 +173,7 @@ class ConfigUpdate(BaseModel):
     tibber_token: Optional[str] = None
     tibber_home_id: Optional[str] = None
     openweather_api_key: Optional[str] = None
+    pv_peak_watts: Optional[float] = None
     executor_backend: Optional[str] = None
     telemetry_backend: Optional[str] = None
     dbus_reassert_attempts: Optional[int] = None
