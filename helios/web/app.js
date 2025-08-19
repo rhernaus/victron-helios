@@ -313,7 +313,7 @@ function clearCanvas(canvas) {
   if (!canvas) return { ctx: null, W: 0, H: 0 };
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
-  const W = canvas.clientWidth || canvas.width;
+  const W = Math.min(2000, canvas.clientWidth || canvas.width);
   const H = canvas.clientHeight || canvas.height;
   canvas.width = Math.floor(W * dpr);
   canvas.height = Math.floor(H * dpr);
@@ -347,6 +347,13 @@ function drawAxes(ctx, W, H, yZero) {
   ctx.lineTo(40, H - 24);
   ctx.lineTo(W - 10, H - 24);
   ctx.stroke();
+  // Y ticks and labels
+  ctx.fillStyle = 'rgba(255,255,255,.6)';
+  ctx.font = '12px system-ui, sans-serif';
+  for (let i = 0; i <= 4; i++) {
+    const gy = 10 + (H - 34) * (i / 4);
+    ctx.fillRect(37, gy, 3, 1);
+  }
   if (yZero !== null && yZero !== undefined) {
     ctx.strokeStyle = 'rgba(255,255,255,.15)';
     ctx.beginPath();
@@ -381,11 +388,15 @@ function drawPriceChart(canvas, prices) {
   const y = makeScale(ymin, ymax, H - padB, padT);
   drawAxes(ctx, W, H, y(0));
 
-  // gridlines
+  // gridlines and Y labels
   ctx.strokeStyle = 'rgba(255,255,255,.06)';
   for (let g = 0; g <= 4; g++) {
     const gy = y(ymin + (ymax - ymin) * g / 4);
     ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(W - padR, gy); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.6)';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText((ymin + (ymax - ymin) * g / 4).toFixed(2), padL - 6, gy + 4);
   }
 
   function drawLine(key, color) {
@@ -418,6 +429,17 @@ function drawPriceChart(canvas, prices) {
 
   drawLine('buy', '#ef4444');
   drawLine('sell', '#84cc16');
+
+  // X-axis hour ticks
+  ctx.fillStyle = 'rgba(255,255,255,.6)';
+  ctx.textAlign = 'center';
+  for (let i = 0; i < items.length; i++) {
+    if (i % 2) continue;
+    const tt = new Date(items[i].t).getTime();
+    const tx = x(tt);
+    const label = new Date(tt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    ctx.fillText(label, tx, H - 8);
+  }
 
   // legend
   const legend = $('#legend-prices');
@@ -508,6 +530,16 @@ function drawEnergyChart(canvas, plan) {
     <div class="key"><span class="swatch" style="background:#ef4444"></span> From grid to usage</div>
     <div class="key"><span class="swatch" style="background:#ec4899"></span> From grid to battery</div>
   `;
+
+  // X-axis labels
+  ctx.fillStyle = 'rgba(255,255,255,.6)';
+  ctx.textAlign = 'center';
+  for (let i = 0; i < bars.length; i++) {
+    if (i % 2) continue;
+    const tx = x(bars[i].t);
+    const label = new Date(bars[i].t).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    ctx.fillText(label, tx + barW/2, H - 8);
+  }
 }
 
 function drawCostsChart(canvas, plan, prices) {
@@ -583,5 +615,15 @@ function drawCostsChart(canvas, plan, prices) {
     <div class=\"key\"><span class=\"swatch\" style=\"background:#84cc16\"></span> Grid savings</div>
     <div class=\"key\"><span class=\"swatch\" style=\"background:#60a5fa\"></span> Battery costs</div>
   `;
+
+  // X-axis labels
+  ctx.fillStyle = 'rgba(255,255,255,.6)';
+  ctx.textAlign = 'center';
+  for (let i = 0; i < bars.length; i++) {
+    if (i % 2) continue;
+    const tx = x(bars[i].t);
+    const label = new Date(bars[i].t).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    ctx.fillText(label, tx + barW/2, H - 8);
+  }
 }
 

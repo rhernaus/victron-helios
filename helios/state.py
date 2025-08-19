@@ -11,6 +11,11 @@ from .executor import Executor
 from .models import Plan
 from .providers import PriceProvider, ForecastProvider
 from .telemetry import TelemetryReader, TelemetrySnapshot, NoOpTelemetryReader
+try:
+    # Optional: lightweight SQL storage for telemetry/history in future
+    import sqlite3  # noqa: F401
+except Exception:  # pragma: no cover - optional
+    pass
 
 if TYPE_CHECKING:
     from .planner import Planner

@@ -34,6 +34,8 @@ from .providers import (
 from .scheduler import HeliosScheduler
 from .telemetry import DbusTelemetryReader, NoOpTelemetryReader, TelemetrySnapshot
 from .state import HeliosState, get_state
+import sqlite3
+from contextlib import closing
 
 logger = logging.getLogger("helios")
 
@@ -232,6 +234,26 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
             snap = reader.read()
             with state.lock:
                 state.last_telemetry = snap
+            # Persist a rolling sample if DB available and data_dir writable
+            try:
+                db_path = Path(state.settings.data_dir) / "telemetry.db"
+                db_path.parent.mkdir(parents=True, exist_ok=True)
+                with closing(sqlite3.connect(str(db_path))) as conn:
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS telemetry (ts INTEGER PRIMARY KEY, soc REAL, load INTEGER, solar INTEGER)"
+                    )
+                    conn.execute(
+                        "INSERT OR REPLACE INTO telemetry(ts, soc, load, solar) VALUES (?, ?, ?, ?)",
+                        (
+                            int(datetime.now(timezone.utc).timestamp()),
+                            snap.soc_percent if snap.soc_percent is not None else None,
+                            snap.load_w if snap.load_w is not None else None,
+                            snap.solar_w if snap.solar_w is not None else None,
+                        ),
+                    )
+                    conn.commit()
+            except Exception:
+                pass
         except Exception as exc:
             # Keep last snapshot but record the failure for diagnostics
             logger.debug("Telemetry read failed: %s", exc)
@@ -313,6 +335,30 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
         data = generate_latest()
         # Return a raw Response with the correct content type
         return Response(content=data, media_type=CONTENT_TYPE_LATEST)
+
+    @app.get("/telemetry/history")
+    def telemetry_history(limit: int = 500) -> dict:
+        """Return recent telemetry rows from the local SQLite store.
+
+        This is a simple built-in time-series store to bootstrap forecasting.
+        """
+        try:
+            db_path = Path(state.settings.data_dir) / "telemetry.db"
+            with closing(sqlite3.connect(str(db_path))) as conn:
+                rows = list(
+                    conn.execute(
+                        "SELECT ts, soc, load, solar FROM telemetry ORDER BY ts DESC LIMIT ?",
+                        (int(max(1, min(10000, limit))),),
+                    )
+                )
+        except Exception:
+            rows = []
+        rows.reverse()
+        items = [
+            {"t": datetime.fromtimestamp(r[0], tz=timezone.utc).isoformat(), "soc": r[1], "load": r[2], "solar": r[3]}
+            for r in rows
+        ]
+        return {"items": items}
 
     @app.get("/config", response_model=ConfigResponse)
     def get_config() -> ConfigResponse:
