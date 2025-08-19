@@ -74,6 +74,9 @@ async function refreshPlan() {
   const container = $('#plan-container');
   try {
     const p = await api('/plan');
+    // Also fetch price series for graphs
+    let priceData = null;
+    try { priceData = await api('/prices'); } catch (_) { priceData = null; }
     const now = Date.now();
     if ($('#plan-summary')) $('#plan-summary').textContent = p.summary || '—';
     container.innerHTML = '';
@@ -93,6 +96,9 @@ async function refreshPlan() {
       `;
       container.appendChild(div);
     });
+
+    // Render charts when plan and optional prices are available
+    try { renderCharts(p, priceData); } catch(e) { /* best-effort; keep UI */ }
   } catch (e) {
     container.innerHTML = '<div class="muted">Plan not ready</div>';
   }
@@ -289,4 +295,298 @@ function init() {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+// ----- Charts (lightweight canvas rendering; no external deps) -----
+function renderCharts(plan, prices) {
+  drawPriceChart($('#chart-prices'), prices);
+  drawEnergyChart($('#chart-energy'), plan);
+  drawCostsChart($('#chart-costs'), plan, prices);
+}
+
+function makeScale(domainMin, domainMax, rangeMin, rangeMax) {
+  const span = domainMax - domainMin || 1;
+  const k = (rangeMax - rangeMin) / span;
+  return (v) => rangeMin + (v - domainMin) * k;
+}
+
+function clearCanvas(canvas) {
+  if (!canvas) return { ctx: null, W: 0, H: 0 };
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.clientWidth || canvas.width;
+  const H = canvas.clientHeight || canvas.height;
+  canvas.width = Math.floor(W * dpr);
+  canvas.height = Math.floor(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  return { ctx, W, H };
+}
+
+// simple diagonal stripe pattern cache per color
+const __stripeCache = new Map();
+function getStripePattern(ctx, color) {
+  const key = color || '#fff';
+  if (__stripeCache.has(key)) return __stripeCache.get(key);
+  const c = document.createElement('canvas');
+  c.width = 8; c.height = 8;
+  const g = c.getContext('2d');
+  g.strokeStyle = color; g.lineWidth = 2; g.globalAlpha = 0.9;
+  g.beginPath();
+  g.moveTo(-2, 8); g.lineTo(8, -2); // diagonal
+  g.stroke();
+  const pat = ctx.createPattern(c, 'repeat');
+  __stripeCache.set(key, pat);
+  return pat;
+}
+
+function drawAxes(ctx, W, H, yZero) {
+  ctx.strokeStyle = '#1f2a37';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(40, 10);
+  ctx.lineTo(40, H - 24);
+  ctx.lineTo(W - 10, H - 24);
+  ctx.stroke();
+  if (yZero !== null && yZero !== undefined) {
+    ctx.strokeStyle = 'rgba(255,255,255,.15)';
+    ctx.beginPath();
+    ctx.moveTo(40, yZero);
+    ctx.lineTo(W - 10, yZero);
+    ctx.stroke();
+  }
+}
+
+function timeDomainFromPlan(plan) {
+  if (!plan || !plan.slots || plan.slots.length === 0) {
+    const now = Date.now();
+    return [now, now + 3600_000];
+  }
+  const start = new Date(plan.slots[0].start).getTime();
+  const end = new Date(plan.slots[plan.slots.length - 1].end).getTime();
+  return [start, end];
+}
+
+function drawPriceChart(canvas, prices) {
+  if (!canvas) return;
+  const { ctx, W, H } = clearCanvas(canvas);
+  if (!ctx) return;
+  const padL = 40, padB = 24, padT = 10, padR = 10;
+
+  const items = (prices && prices.items) ? prices.items : [];
+  const tmin = items.length ? new Date(items[0].t).getTime() : Date.now();
+  const tmax = items.length ? new Date(items[items.length-1].t).getTime() + 3600_000 : tmin + 3600_000;
+  const ymin = Math.min(0, ...items.map(i => Math.min(i.buy ?? i.raw, i.sell ?? i.raw)));
+  const ymax = Math.max(0.01, ...items.map(i => Math.max(i.buy ?? i.raw, i.sell ?? i.raw)));
+  const x = makeScale(tmin, tmax, padL, W - padR);
+  const y = makeScale(ymin, ymax, H - padB, padT);
+  drawAxes(ctx, W, H, y(0));
+
+  // gridlines
+  ctx.strokeStyle = 'rgba(255,255,255,.06)';
+  for (let g = 0; g <= 4; g++) {
+    const gy = y(ymin + (ymax - ymin) * g / 4);
+    ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(W - padR, gy); ctx.stroke();
+  }
+
+  function drawLine(key, color) {
+    const now = Date.now();
+    ctx.lineWidth = 2;
+    let segment = [];
+    const flush = (predicted) => {
+      if (segment.length < 2) { segment = []; return; }
+      ctx.beginPath();
+      ctx.setLineDash(predicted ? [6, 4] : []);
+      ctx.strokeStyle = color;
+      segment.forEach((pt, i) => { if (i===0) ctx.moveTo(pt[0], pt[1]); else ctx.lineTo(pt[0], pt[1]); });
+      ctx.stroke();
+      ctx.setLineDash([]);
+      segment = [];
+    };
+    items.forEach((it, idx) => {
+      const tt = new Date(it.t).getTime();
+      const tx = x(tt);
+      const val = it[key] ?? it.raw;
+      const ty = y(val);
+      const future = tt > now;
+      // start new segment if needed
+      if (segment.length && segment._future !== future) { flush(segment._future); }
+      segment._future = future; // attach flag
+      segment.push([tx, ty]);
+    });
+    flush(segment._future);
+  }
+
+  drawLine('buy', '#ef4444');
+  drawLine('sell', '#84cc16');
+
+  // legend
+  const legend = $('#legend-prices');
+  if (legend) legend.innerHTML = `
+    <div class="key"><span class="swatch" style="background:#ef4444"></span> buy price</div>
+    <div class="key"><span class="swatch" style="background:#84cc16"></span> sell price</div>
+  `;
+}
+
+function drawEnergyChart(canvas, plan) {
+  if (!canvas) return;
+  const { ctx, W, H } = clearCanvas(canvas);
+  if (!ctx) return;
+  const padL = 40, padB = 24, padT = 10, padR = 10;
+
+  const [tmin, tmax] = timeDomainFromPlan(plan);
+  const x = makeScale(tmin, tmax, padL, W - padR);
+  const ymin = -1; // dynamic below
+  const ymax = 1;
+
+  // Build stacked series per slot using target_grid_setpoint_w only (simple view)
+  // Positive kWh bars: battery->grid (light blue), solar->grid (orange), solar->battery (green), solar->usage (yellow)
+  // Negative kWh bars: battery->usage (blue), grid->usage (red), grid->battery (pink)
+  const slotSecs = plan.planning_window_seconds || 900;
+
+  // For now, map action to a single stream to visualize setpoint intent:
+  // - export_to_grid => battery->grid (positive)
+  // - charge_from_grid => grid->battery (negative)
+  // - idle/discharge_to_load not used by this simple planner; show grid->usage when positive import setpoint
+  const streams = [
+    { key: 'batt_grid', color: '#60a5fa', sign: 1 },
+    { key: 'solar_grid', color: '#f59e0b', sign: 1 },
+    { key: 'solar_batt', color: '#22c55e', sign: 1 },
+    { key: 'solar_use', color: '#fde047', sign: 1 },
+    { key: 'batt_use', color: '#3b82f6', sign: -1 },
+    { key: 'grid_use', color: '#ef4444', sign: -1 },
+    { key: 'grid_batt', color: '#ec4899', sign: -1 },
+  ];
+
+  // Compute values (kWh per slot)
+  const bars = plan.slots.map(s => {
+    const t0 = new Date(s.start).getTime();
+    const w = s.target_grid_setpoint_w; // + import from grid, - export to grid
+    const kwh = Math.abs(w) * (slotSecs / 3600) / 1000;
+    const obj = { t: t0 };
+    streams.forEach(st => obj[st.key] = 0);
+    if (w > 0) {
+      // import from grid → grid->usage (approx)
+      obj['grid_use'] = kwh;
+    } else if (w < 0) {
+      // export to grid → batt->grid
+      obj['batt_grid'] = kwh;
+    }
+    return obj;
+  });
+
+  const vmax = Math.max(0.01, ...bars.map(b => streams.reduce((acc, st) => acc + (st.sign > 0 ? b[st.key] : 0), 0)));
+  const vmin = -Math.max(0.01, ...bars.map(b => streams.reduce((acc, st) => acc + (st.sign < 0 ? b[st.key] : 0), 0)));
+  const y = makeScale(vmin, vmax, H - padB, padT);
+  drawAxes(ctx, W, H, y(0));
+
+  // bar width
+  const barW = Math.max(2, (W - padL - padR) / bars.length - 2);
+
+  // draw stacked bars
+  const now = Date.now();
+  bars.forEach((b, idx) => {
+    const cx = x(b.t) + 1;
+    const predicted = b.t > now;
+    let yPos = y(0);
+    // positive stacks
+    streams.filter(s => s.sign > 0).forEach(st => {
+      const h = y(0) - y(b[st.key]);
+      if (h <= 0) return;
+      ctx.fillStyle = predicted ? getStripePattern(ctx, st.color) : st.color; ctx.globalAlpha = 0.9;
+      ctx.fillRect(cx, yPos - h, barW, h);
+      yPos -= h;
+    });
+    // negative stacks
+    yPos = y(0);
+    streams.filter(s => s.sign < 0).forEach(st => {
+      const h = y(-b[st.key]) - y(0);
+      if (h <= 0) return;
+      ctx.fillStyle = predicted ? getStripePattern(ctx, st.color) : st.color; ctx.globalAlpha = 0.9;
+      ctx.fillRect(cx, yPos, barW, h);
+      yPos += h;
+    });
+  });
+
+  const legend = $('#legend-energy');
+  if (legend) legend.innerHTML = `
+    <div class="key"><span class="swatch" style="background:#60a5fa"></span> From battery to grid</div>
+    <div class="key"><span class="swatch" style="background:#f59e0b"></span> From solar to grid</div>
+    <div class="key"><span class="swatch" style="background:#22c55e"></span> From solar to battery</div>
+    <div class="key"><span class="swatch" style="background:#fde047"></span> From solar to usage</div>
+    <div class="key"><span class="swatch" style="background:#3b82f6"></span> From battery to usage</div>
+    <div class="key"><span class="swatch" style="background:#ef4444"></span> From grid to usage</div>
+    <div class="key"><span class="swatch" style="background:#ec4899"></span> From grid to battery</div>
+  `;
+}
+
+function drawCostsChart(canvas, plan, prices) {
+  if (!canvas) return;
+  const { ctx, W, H } = clearCanvas(canvas);
+  if (!ctx) return;
+  const padL = 40, padB = 24, padT = 10, padR = 10;
+
+  // derive per-slot cost using buy/sell price at hour of slot midpoint
+  const items = (prices && prices.items) ? prices.items : [];
+  const priceAt = (timeMs) => {
+    if (!items.length) return { buy: 0, sell: 0 };
+    const hour = new Date(timeMs).setMinutes(0,0,0);
+    let best = items[0];
+    let bestDiff = Math.abs(new Date(best.t).getTime() - hour);
+    for (const it of items) {
+      const diff = Math.abs(new Date(it.t).getTime() - hour);
+      if (diff < bestDiff) { best = it; bestDiff = diff; }
+    }
+    return { buy: best.buy ?? best.raw, sell: best.sell ?? best.raw };
+  };
+
+  const slotSecs = plan.planning_window_seconds || 900;
+  const bars = plan.slots.map(s => {
+    const mid = new Date(s.start).getTime() + (slotSecs*500);
+    const prices = priceAt(mid);
+    const w = s.target_grid_setpoint_w; // + import, - export
+    const kwh = Math.abs(w) * (slotSecs / 3600) / 1000;
+    let gridCost = 0, gridSave = 0, battCost = 0;
+    if (w > 0) gridCost = kwh * prices.buy; // import cost
+    if (w < 0) gridSave = kwh * prices.sell; // export saving
+    // Battery cost not modeled; placeholder small degradation cost per kWh
+    const battThroughput = 0; // set to 0 until modeled
+    battCost = battThroughput * 0.02;
+    return { t: new Date(s.start).getTime(), gridCost, gridSave, battCost };
+  });
+
+  const tmin = bars.length ? bars[0].t : Date.now();
+  const tmax = bars.length ? bars[bars.length-1].t + slotSecs*1000 : tmin + 3600_000;
+  const vmax = Math.max(0.01, ...bars.map(b => b.gridSave));
+  const vmin = -Math.max(0.01, ...bars.map(b => Math.max(b.gridCost, b.battCost)));
+  const x = makeScale(tmin, tmax, padL, W - padR);
+  const y = makeScale(vmin, vmax, H - padB, padT);
+  drawAxes(ctx, W, H, y(0));
+
+  const barW = Math.max(2, (W - padL - padR) / bars.length - 4);
+  const now = Date.now();
+  bars.forEach(b => {
+    const cx = x(b.t) + 2;
+    const predicted = b.t > now;
+    // negative bars
+    let y0 = y(0);
+    const drawNeg = (val, color) => {
+      const h = y(-val) - y(0);
+      if (h <= 0) return;
+      ctx.fillStyle = predicted ? getStripePattern(ctx, color) : color; ctx.globalAlpha = 0.9; ctx.fillRect(cx, y0, barW, h);
+      y0 += h;
+    };
+    drawNeg(b.gridCost, '#ef4444');
+    drawNeg(b.battCost, '#60a5fa');
+    // positive bar
+    const hp = y(0) - y(b.gridSave);
+    if (hp > 0) { ctx.fillStyle = predicted ? getStripePattern(ctx, '#84cc16') : '#84cc16'; ctx.globalAlpha = 0.9; ctx.fillRect(cx, y(0) - hp, barW, hp); }
+  });
+
+  const legend = $('#legend-costs');
+  if (legend) legend.innerHTML = `
+    <div class=\"key\"><span class=\"swatch\" style=\"background:#ef4444\"></span> Grid costs</div>
+    <div class=\"key\"><span class=\"swatch\" style=\"background:#84cc16\"></span> Grid savings</div>
+    <div class=\"key\"><span class=\"swatch\" style=\"background:#60a5fa\"></span> Battery costs</div>
+  `;
+}
 

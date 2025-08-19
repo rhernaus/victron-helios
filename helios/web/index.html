@@ -64,6 +64,23 @@
           <button id="btn-recalc-now" class="btn btn-outline">Recalculate now</button>
         </div>
         <div id="plan-summary" class="muted" style="margin: 0 0 8px 0;">—</div>
+        <div id="plan-charts" class="charts">
+          <div class="chart-block">
+            <div class="chart-header">Energy prices</div>
+            <canvas id="chart-prices" height="280"></canvas>
+            <div class="legend" id="legend-prices"></div>
+          </div>
+          <div class="chart-block">
+            <div class="chart-header">Energy management</div>
+            <canvas id="chart-energy" height="300"></canvas>
+            <div class="legend" id="legend-energy"></div>
+          </div>
+          <div class="chart-block">
+            <div class="chart-header">Costs and savings</div>
+            <canvas id="chart-costs" height="300"></canvas>
+            <div class="legend" id="legend-costs"></div>
+          </div>
+        </div>
         <div id="plan-container" class="plan-list">
           <div class="muted">Loading plan…</div>
         </div>

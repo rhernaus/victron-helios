@@ -391,6 +391,48 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
             )
             return state.latest_plan.model_dump()
 
+    @app.get("/prices")
+    def get_prices() -> dict:  # pragma: no cover - exercised via UI, not tests
+        """Return the current planning horizon price series and derived buy/sell prices.
+
+        The response schema is intentionally simple for the web UI and not versioned.
+        """
+        # Snapshot settings and provider without holding the lock across network calls
+        with state.lock:
+            settings_snapshot = state.settings
+            provider_to_use: PriceProvider | None = state.price_provider
+        if provider_to_use is None:
+            provider_to_use = _select_price_provider(settings_snapshot)
+            with state.lock:
+                state.price_provider = provider_to_use
+
+        now = datetime.now(timezone.utc)
+        start_hour = now.replace(minute=0, second=0, microsecond=0)
+        horizon_hours = settings_snapshot.planning_horizon_hours
+
+        raw_series = provider_to_use.get_prices(
+            start_hour, start_hour + timedelta(hours=horizon_hours)
+        )
+
+        def to_buy_sell(raw: float) -> tuple[float, float]:
+            buy = raw * settings_snapshot.buy_price_multiplier + settings_snapshot.buy_price_fixed_fee_eur_per_kwh
+            sell = raw * settings_snapshot.sell_price_multiplier - settings_snapshot.sell_price_fixed_deduction_eur_per_kwh
+            return buy, sell
+
+        items = []
+        for ts, raw in raw_series:
+            buy, sell = to_buy_sell(raw)
+            items.append(
+                {
+                    "t": ts.isoformat(),
+                    "raw": round(float(raw), 6),
+                    "buy": round(float(buy), 6),
+                    "sell": round(float(sell), 6),
+                }
+            )
+
+        return {"generated_at": now.isoformat(), "start": start_hour.isoformat(), "items": items}
+
     # --- Web UI mounting ---
     try:
         web_dir = Path(__file__).resolve().parent / "web"

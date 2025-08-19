@@ -49,3 +49,10 @@ input::placeholder,textarea::placeholder{color:#6b7d90}
 .metrics{max-height:400px;overflow:auto;background:#0f1720;border:1px solid var(--border);border-radius:8px;padding:12px}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#0f1720;border:1px solid var(--border);padding:10px 14px;border-radius:10px;box-shadow:0 5px 28px rgba(0,0,0,.35)}
 
+.charts{display:grid;grid-template-columns:1fr;gap:16px;margin:8px 0 16px}
+.chart-block{background:#0f1720;border:1px solid var(--border);border-radius:10px;padding:10px}
+.chart-header{font-weight:600;margin:6px 0 10px;color:var(--muted)}
+.legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;color:var(--muted);font-size:12px}
+.legend .key{display:flex;align-items:center;gap:6px}
+.legend .swatch{width:12px;height:12px;border-radius:3px;border:1px solid var(--border)}
+
