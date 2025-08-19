@@ -75,4 +75,4 @@ jobs:
           pytest -q --maxfail=1 --disable-warnings \
             --cov=helios \
             --cov-report=term-missing:skip-covered \
-            --cov-fail-under=70
+            --cov-fail-under=75
