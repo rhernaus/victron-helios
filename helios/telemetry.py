@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Optional
 
 
@@ -126,6 +127,7 @@ class DbusTelemetryReader(TelemetryReader):  # pragma: no cover - hardware speci
                     break
             snap.ev_status = ev_status or None
             return snap
-        except Exception:
+        except Exception as exc:
             # If dbus not available or any failure, return empty snapshot
+            logging.getLogger("helios.telemetry").warning("DBus telemetry read failed: %s", exc)
             return TelemetrySnapshot()

@@ -284,7 +284,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                     logger.debug("Telemetry DB write failed: %s", db_exc)
         except Exception as exc:
             # Keep last snapshot but record the failure for diagnostics
-            logger.debug("Telemetry read failed: %s", exc)
+            logger.warning("Telemetry read failed: %s", exc)
 
     @app.on_event("startup")
     def on_startup() -> None:
