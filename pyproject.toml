@@ -38,3 +38,10 @@ zip-safe = true
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["helios*"]
+
+[tool.setuptools.package-data]
+helios = [
+    "web/index.html",
+    "web/styles.css",
+    "web/app.js",
+]

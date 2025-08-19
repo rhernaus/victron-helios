@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import Callable
 
+from apscheduler.events import EVENT_JOB_MISSED
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-from apscheduler.events import EVENT_JOB_MISSED
 
-from .state import HeliosState
 from .metrics import scheduler_misfires_total
+from .state import HeliosState
 
 
 class HeliosScheduler:

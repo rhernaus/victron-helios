@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Helios</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="container header-inner">
+      <div class="brand">
+        <div class="logo">☀️</div>
+        <div class="title">Helios</div>
+      </div>
+      <div class="header-actions">
+        <div id="health-indicator" class="chip chip-muted">Health: unknown</div>
+        <button id="pause-resume" class="btn">Pause</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <nav class="tabs">
+      <button class="tab active" data-tab="status">Status</button>
+      <button class="tab" data-tab="plan">Plan</button>
+      <button class="tab" data-tab="config">Config</button>
+      <button class="tab" data-tab="metrics">Metrics</button>
+    </nav>
+
+    <section id="tab-status" class="tab-panel active">
+      <div class="cards">
+        <div class="card">
+          <h3>Automation</h3>
+          <div class="kv"><span>Paused</span><span id="automation-paused">—</span></div>
+          <div class="kv"><span>Last plan</span><span id="last-recalc">—</span></div>
+          <div class="kv"><span>Last control</span><span id="last-control">—</span></div>
+        </div>
+
+        <div class="card">
+          <h3>Quick Actions</h3>
+          <div class="btn-row">
+            <button id="btn-pause" class="btn btn-outline">Pause</button>
+            <button id="btn-resume" class="btn btn-primary">Resume</button>
+            <button id="btn-refresh" class="btn">Refresh</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-plan" class="tab-panel">
+      <div class="card">
+        <div class="card-header">
+          <h3>Plan</h3>
+          <div class="flex-spacer"></div>
+          <label class="toggle">
+            <input id="auto-refresh" type="checkbox" checked />
+            <span>Auto-refresh</span>
+          </label>
+        </div>
+        <div id="plan-container" class="plan-list">
+          <div class="muted">Loading plan…</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-config" class="tab-panel">
+      <div class="cards">
+        <div class="card">
+          <h3>Quick Setup</h3>
+          <div class="grid-2">
+            <label>Grid import limit (W)
+              <input id="grid_import_limit_w" type="number" placeholder="e.g. 2000" />
+            </label>
+            <label>Grid export limit (W)
+              <input id="grid_export_limit_w" type="number" placeholder="e.g. 2000" />
+            </label>
+            <label>Enable grid sell
+              <select id="grid_sell_enabled">
+                <option value="false">false</option>
+                <option value="true">true</option>
+              </select>
+            </label>
+            <label>Price hysteresis (€/kWh)
+              <input id="price_hysteresis_eur_per_kwh" type="number" step="0.001" placeholder="0.02" />
+            </label>
+            <label>Executor backend
+              <select id="executor_backend">
+                <option value="noop">noop</option>
+                <option value="dbus">dbus</option>
+              </select>
+            </label>
+            <label>Price provider
+              <select id="price_provider">
+                <option value="stub">stub</option>
+                <option value="tibber">tibber</option>
+              </select>
+            </label>
+            <label>Assumed current SoC (%)
+              <input id="assumed_current_soc_percent" type="number" step="1" placeholder="50" />
+            </label>
+          </div>
+          <div class="btn-row">
+            <button id="btn-save-quick" class="btn btn-primary">Save</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Secrets</h3>
+          <div class="grid-2">
+            <label>Tibber token
+              <input id="tibber_token" type="password" placeholder="sk_..." />
+            </label>
+            <label>Tibber home ID (optional)
+              <input id="tibber_home_id" type="text" placeholder="UUID" />
+            </label>
+            <label>OpenWeather API key (optional)
+              <input id="openweather_api_key" type="password" placeholder="..." />
+            </label>
+          </div>
+          <div class="muted" id="secrets-info"></div>
+          <div class="btn-row">
+            <button id="btn-save-secrets" class="btn">Save secrets</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>All Settings</h3>
+          <div id="all-settings" class="settings-grid"></div>
+          <div class="btn-row">
+            <button id="btn-save-all" class="btn">Save all</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-metrics" class="tab-panel">
+      <div class="card">
+        <div class="card-header">
+          <h3>Metrics</h3>
+          <div class="flex-spacer"></div>
+          <button id="btn-load-metrics" class="btn">Load</button>
+          <a class="btn btn-outline" href="/metrics" target="_blank" rel="noopener">Open raw</a>
+        </div>
+        <pre id="metrics" class="metrics"></pre>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
+
