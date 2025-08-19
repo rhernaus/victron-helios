@@ -621,7 +621,7 @@ function drawEnergyChart(canvas, plan, domainOverride) {
     streams.filter(s => s.sign > 0).forEach(st => {
       const h = y(0) - y(b[st.key]);
       if (h <= 0) return;
-      ctx.fillStyle = predicted ? getStripePattern(ctx, st.color) : st.color; ctx.globalAlpha = 0.9;
+      ctx.fillStyle = st.color; ctx.globalAlpha = predicted ? 0.5 : 0.9;
       ctx.fillRect(cx, yPos - h, barW, h);
       yPos -= h;
     });
@@ -630,7 +630,7 @@ function drawEnergyChart(canvas, plan, domainOverride) {
     streams.filter(s => s.sign < 0).forEach(st => {
       const h = y(-b[st.key]) - y(0);
       if (h <= 0) return;
-      ctx.fillStyle = predicted ? getStripePattern(ctx, st.color) : st.color; ctx.globalAlpha = 0.9;
+      ctx.fillStyle = st.color; ctx.globalAlpha = predicted ? 0.5 : 0.9;
       ctx.fillRect(cx, yPos, barW, h);
       yPos += h;
     });
@@ -732,14 +732,14 @@ function drawCostsChart(canvas, plan, prices, domainOverride) {
     const drawNeg = (val, color) => {
       const h = y(-val) - y(0);
       if (h <= 0) return;
-      ctx.fillStyle = predicted ? getStripePattern(ctx, color) : color; ctx.globalAlpha = 0.9; ctx.fillRect(cx, y0, barW, h);
+      ctx.fillStyle = color; ctx.globalAlpha = predicted ? 0.5 : 0.9; ctx.fillRect(cx, y0, barW, h);
       y0 += h;
     };
     drawNeg(b.gridCost, '#ef4444');
     drawNeg(b.battCost, '#60a5fa');
     // positive bar
     const hp = y(0) - y(b.gridSave);
-    if (hp > 0) { ctx.fillStyle = predicted ? getStripePattern(ctx, '#84cc16') : '#84cc16'; ctx.globalAlpha = 0.9; ctx.fillRect(cx, y(0) - hp, barW, hp); }
+    if (hp > 0) { ctx.fillStyle = '#84cc16'; ctx.globalAlpha = predicted ? 0.5 : 0.9; ctx.fillRect(cx, y(0) - hp, barW, hp); }
   });
 
   const legend = $('#legend-costs');
