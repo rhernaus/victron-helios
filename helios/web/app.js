@@ -495,7 +495,7 @@ function drawPriceChart(canvas, prices, domainOverride) {
     ctx.fillStyle = 'rgba(255,255,255,.6)';
     ctx.font = '12px system-ui, sans-serif';
     ctx.textAlign = 'right';
-    ctx.fillText((ymin + (ymax - ymin) * g / 4).toFixed(2), padL - 6, gy + 4);
+    ctx.fillText('€' + (ymin + (ymax - ymin) * g / 4).toFixed(2), padL - 6, gy + 4);
   }
 
   function drawLine(key, color) {
