@@ -61,6 +61,9 @@ class Planner:
         # hysteresis around pivot to reduce flapping.
         import_limit = self.settings.grid_import_limit_w or 0
         export_limit = self.settings.grid_export_limit_w or 0
+        # Respect battery power limits if provided (planner-level clamp)
+        battery_charge_limit = self.settings.battery_charge_limit_w or import_limit
+        battery_discharge_limit = self.settings.battery_discharge_limit_w or export_limit
 
         # Default idle
         action = Action.IDLE
@@ -84,10 +87,11 @@ class Planner:
             action = Action.CHARGE_FROM_GRID
             # Use configured limit; planner may later incorporate battery
             # charge limit and pricing formulas
-            setpoint = import_limit
+            setpoint = min(import_limit, battery_charge_limit)
         elif self.settings.grid_sell_enabled and expensive and export_limit > 0:
             action = Action.EXPORT_TO_GRID
-            setpoint = -export_limit
+            # Negative setpoint for export; clamp by grid and battery discharge limit
+            setpoint = -min(export_limit, battery_discharge_limit)
 
         return action, setpoint
 

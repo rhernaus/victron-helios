@@ -160,6 +160,27 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
     def on_shutdown() -> None:
         scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
         scheduler.shutdown()
+        # As a safety measure, reset grid setpoint to 0 on shutdown if using D-Bus executor
+        try:
+            with state.lock:
+                executor = state.executor
+            if isinstance(executor, DbusExecutor):
+                import dbus  # type: ignore
+
+                bus = dbus.SystemBus()
+                proxy = bus.get_object(
+                    "com.victronenergy.settings", "/Settings/CGwacs/AcPowerSetPoint"
+                )
+                try:
+                    iface = dbus.Interface(proxy, dbus_interface="com.victronenergy.BusItem")
+                    iface.SetValue(0)
+                except Exception:
+                    props = dbus.Interface(
+                        proxy, dbus_interface="org.freedesktop.DBus.Properties"
+                    )
+                    props.Set("com.victronenergy.BusItem", "Value", 0)
+        except Exception:  # nosec B112
+            pass
 
     @app.get("/health")
     def health() -> dict:
