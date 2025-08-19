@@ -44,11 +44,56 @@ Settings can be updated at runtime via `PUT /config` and are also loadable via e
 
 ### Running on Cerbo GX
 
-On a Victron Cerbo GX (Venus OS):
+Follow these steps on a Victron Cerbo GX (Venus OS):
 
-- Install to `/data/helios` with a Python venv under `/data/helios/.venv`
-- Persist configuration to `/data/helios/settings.yaml` (or `.env`); secrets are not returned by the API
-- Start on boot by appending a line in `/data/rc.local` to launch `uvicorn main:app --host 127.0.0.1 --port 8080`
-- Ensure D-Bus write access to `/Settings/CGwacs/AcPowerSetPoint` for ESS control
+1) Enable Superuser/Developer mode and SSH on the device UI:
 
-Note: `uvicorn[standard]` extras are not required on device; plain `uvicorn` is sufficient.
+- Settings → General → Access Level: switch to Superuser (long‑press on Access Level)
+- Settings → General → Set root password
+- Settings → General → Enable SSH on LAN
+
+2) SSH into the device from your computer:
+
+```bash
+ssh root@<CERBO_IP>
+```
+
+3) Clone the repository to `/data/helios`:
+
+```bash
+git clone <REPO_URL> /data/helios
+```
+
+Alternative using a working directory:
+
+```bash
+git -C /data clone <REPO_URL> helios
+```
+
+4) Create and activate a Python virtual environment, then install dependencies:
+
+```bash
+python3 -m venv /data/helios/.venv
+source /data/helios/.venv/bin/activate
+pip install -U pip
+pip install -r /data/helios/requirements.txt
+```
+
+5) Run the API:
+
+```bash
+cd /data/helios
+uvicorn main:app --host 127.0.0.1 --port 8080
+```
+
+6) Optional: start on boot by appending to `/data/rc.local`:
+
+```sh
+. /data/helios/.venv/bin/activate
+cd /data/helios
+uvicorn main:app --host 127.0.0.1 --port 8080 &
+```
+
+- Data and configuration live under `/data/helios` (e.g., `/data/helios/settings.yaml`).
+- Ensure D-Bus write access to `/Settings/CGwacs/AcPowerSetPoint` for ESS control.
+- Note: `uvicorn[standard]` extras are not required on device; plain `uvicorn` is sufficient.
