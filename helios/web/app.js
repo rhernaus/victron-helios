@@ -349,7 +349,8 @@ function clearCanvas(canvas) {
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
   const W = Math.min(1200, canvas.clientWidth || canvas.width);
-  const H = Math.min(700, (canvas.clientHeight || canvas.height || 0) || 0) || Math.min(700, canvas.height || 0) || 700;
+  const rawH = (canvas.clientHeight || canvas.height || 500);
+  const H = Math.min(500, rawH);
   canvas.width = Math.floor(W * dpr);
   canvas.height = Math.floor(H * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
