@@ -34,7 +34,11 @@ from .providers import (
 from .scheduler import HeliosScheduler
 from .telemetry import DbusTelemetryReader, NoOpTelemetryReader, TelemetrySnapshot
 from .state import HeliosState, get_state
-import sqlite3
+
+try:  # optional dependency for local telemetry storage
+    import sqlite3  # type: ignore
+except Exception:  # pragma: no cover - optional
+    sqlite3 = None  # type: ignore[assignment]
 from contextlib import closing
 
 logger = logging.getLogger("helios")
@@ -249,30 +253,31 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
             with state.lock:
                 state.last_telemetry = snap
             # Persist a rolling sample if DB available and data_dir writable
-            try:
-                db_path = Path(state.settings.data_dir) / "telemetry.db"
-                db_path.parent.mkdir(parents=True, exist_ok=True)
-                with closing(sqlite3.connect(str(db_path))) as conn:
-                    conn.execute(
-                        "CREATE TABLE IF NOT EXISTS telemetry ("
-                        "ts INTEGER PRIMARY KEY, "
-                        "soc REAL, load INTEGER, solar INTEGER)"
-                    )
-                    conn.execute(
-                        (
-                            "INSERT OR REPLACE INTO telemetry("
-                            "ts, soc, load, solar) VALUES (?, ?, ?, ?)"
-                        ),
-                        (
-                            int(datetime.now(timezone.utc).timestamp()),
-                            snap.soc_percent if snap.soc_percent is not None else None,
-                            snap.load_w if snap.load_w is not None else None,
-                            snap.solar_w if snap.solar_w is not None else None,
-                        ),
-                    )
-                    conn.commit()
-            except Exception as db_exc:
-                logger.debug("Telemetry DB write failed: %s", db_exc)
+            if sqlite3 is not None:
+                try:
+                    db_path = Path(state.settings.data_dir) / "telemetry.db"
+                    db_path.parent.mkdir(parents=True, exist_ok=True)
+                    with closing(sqlite3.connect(str(db_path))) as conn:  # type: ignore[union-attr]
+                        conn.execute(
+                            "CREATE TABLE IF NOT EXISTS telemetry ("
+                            "ts INTEGER PRIMARY KEY, "
+                            "soc REAL, load INTEGER, solar INTEGER)"
+                        )
+                        conn.execute(
+                            (
+                                "INSERT OR REPLACE INTO telemetry("
+                                "ts, soc, load, solar) VALUES (?, ?, ?, ?)"
+                            ),
+                            (
+                                int(datetime.now(timezone.utc).timestamp()),
+                                snap.soc_percent if snap.soc_percent is not None else None,
+                                snap.load_w if snap.load_w is not None else None,
+                                snap.solar_w if snap.solar_w is not None else None,
+                            ),
+                        )
+                        conn.commit()
+                except Exception as db_exc:
+                    logger.debug("Telemetry DB write failed: %s", db_exc)
         except Exception as exc:
             # Keep last snapshot but record the failure for diagnostics
             logger.debug("Telemetry read failed: %s", exc)
