@@ -602,6 +602,16 @@ function drawEnergyChart(canvas, plan, domainOverride) {
   const vmin = -Math.max(0.01, ...bars.map(b => streams.reduce((acc, st) => acc + (st.sign < 0 ? b[st.key] : 0), 0)));
   const y = makeScale(vmin, vmax, H - padB, padT);
   drawAxes(ctx, W, H, y(0));
+  // Y-axis labels
+  ctx.fillStyle = 'rgba(255,255,255,.7)';
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.textAlign = 'right';
+  const yTicks = 4;
+  for (let g = 0; g <= yTicks; g++) {
+    const val = vmin + (vmax - vmin) * g / yTicks;
+    const gy = y(val);
+    ctx.fillText(val.toFixed(2) + ' kWh', 34, gy + 4);
+  }
 
   const slotMs = (plan.planning_window_seconds || 900) * 1000;
   const barW = Math.max(2, x(tmin + slotMs) - x(tmin) - 2);
@@ -716,6 +726,16 @@ function drawCostsChart(canvas, plan, prices, domainOverride) {
   const x = makeScale(tmin, tmax, padL, W - padR);
   const y = makeScale(vmin, vmax, H - padB, padT);
   drawAxes(ctx, W, H, y(0));
+  // Y-axis labels
+  ctx.fillStyle = 'rgba(255,255,255,.7)';
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.textAlign = 'right';
+  const yTicks2 = 4;
+  for (let g = 0; g <= yTicks2; g++) {
+    const val = vmin + (vmax - vmin) * g / yTicks2;
+    const gy = y(val);
+    ctx.fillText('€' + val.toFixed(2), 34, gy + 4);
+  }
 
   const barW = Math.max(2, x(tmin + slotSecs*1000) - x(tmin) - 4);
   const now = Date.now();
