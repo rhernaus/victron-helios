@@ -126,7 +126,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
             try:
                 merged = {**state.settings.model_dump(), **loaded}
                 state.settings = HeliosSettings.model_validate(merged)
-            except Exception:  # nosec B112
+            except Exception:
                 logger.warning("Failed to load settings from disk; using defaults")
 
     # Initialize planner and scheduler if not already
@@ -200,7 +200,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                 except Exception:
                     props = dbus.Interface(proxy, dbus_interface="org.freedesktop.DBus.Properties")
                     props.Set("com.victronenergy.BusItem", "Value", 0)
-        except Exception as exc:  # nosec B112
+        except Exception as exc:
             logger.warning("Failed to reset grid setpoint on shutdown: %s", exc)
 
     @app.get("/health")
@@ -227,7 +227,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                 except Exception:
                     props = dbus.Interface(proxy, dbus_interface="org.freedesktop.DBus.Properties")
                     props.Set("com.victronenergy.BusItem", "Value", 0)
-        except Exception as exc:  # nosec B112
+        except Exception as exc:
             logger.warning("Failed to reset grid setpoint on pause: %s", exc)
         return status()
 
@@ -304,7 +304,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                 # persist non-secret settings snapshot to disk
                 try:
                     state.settings.persist_to_disk()
-                except Exception:  # nosec B112
+                except Exception:
                     logger.warning("Failed to persist settings to disk")
                 return ConfigResponse(data=state.settings.to_public_dict())
         except Exception as exc:  # validation or other issues

@@ -194,7 +194,7 @@ class DbusExecutor(Executor):
                                 executor_misapplies_total.inc()
                         except Exception as verify_exc:
                             logger.debug("Executor verify-read failed: %s", verify_exc)
-                except Exception as dbus_exc:  # nosec B112
+                except Exception as dbus_exc:
                     logger.error("D-Bus write failed: %s", dbus_exc)
                     raise
         except Exception:
@@ -213,6 +213,6 @@ class DbusExecutor(Executor):
                 except Exception:
                     props = dbus.Interface(proxy, dbus_interface="org.freedesktop.DBus.Properties")
                     props.Set("com.victronenergy.BusItem", "Value", 0)
-            except Exception as failsafe_exc:  # nosec B112
+            except Exception as failsafe_exc:
                 logger.warning("Executor failsafe reset to 0W failed: %s", failsafe_exc)
             raise

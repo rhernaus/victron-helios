@@ -181,14 +181,17 @@ class TibberPriceProvider(PriceProvider):
                 total = section.get("total")
                 if starts_at is None or total is None:
                     continue
+                ts_candidate = None
                 try:
-                    ts = datetime.fromisoformat(starts_at.replace("Z", "+00:00")).astimezone(
-                        timezone.utc
-                    )
-                except Exception:  # nosec B112
+                    ts_candidate = datetime.fromisoformat(
+                        starts_at.replace("Z", "+00:00")
+                    ).astimezone(timezone.utc)
+                except Exception:
+                    ts_candidate = None
+                if ts_candidate is None:
                     # Skip bad entries but keep processing other price points
                     continue
-                series.append((ts, float(total)))
+                series.append((ts_candidate, float(total)))
             # Sort and cache full day horizon
             series.sort(key=lambda p: p[0])
             self._set_cache(series)
