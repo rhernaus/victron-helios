@@ -19,7 +19,7 @@ from .metrics import (
     planner_runs_total,
     recalc_job_runs_total,
 )
-from .models import ConfigResponse, Plan, StatusResponse
+from .models import Action, ConfigResponse, Plan, StatusResponse
 from .planner import Planner
 from .providers import PriceProvider, StubPriceProvider, TibberPriceProvider
 from .scheduler import HeliosScheduler
@@ -113,7 +113,7 @@ def _do_control(state: HeliosState) -> None:
     control_ticks_total.inc()
 
 
-def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
+def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  # noqa: C901
     app = FastAPI(default_response_class=JSONResponse)
 
     state = get_state()
@@ -126,7 +126,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
             try:
                 merged = {**state.settings.model_dump(), **loaded}
                 state.settings = HeliosSettings.model_validate(merged)
-            except Exception:  # nosec B112
+            except Exception:
                 logger.warning("Failed to load settings from disk; using defaults")
 
     # Initialize planner and scheduler if not already
@@ -136,6 +136,29 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
         state.scheduler = HeliosScheduler(state)
     # Ensure dwell uses configured minimum immediately
     state.dwell.minimum_dwell_seconds = state.settings.minimum_action_dwell_seconds
+    # Configure per-action dwell mapping
+    state.dwell.per_action_dwell_seconds = {
+        Action.CHARGE_FROM_GRID: (
+            state.settings.dwell_seconds_charge_from_grid
+            if state.settings.dwell_seconds_charge_from_grid is not None
+            else state.settings.minimum_action_dwell_seconds
+        ),
+        Action.DISCHARGE_TO_LOAD: (
+            state.settings.dwell_seconds_discharge_to_load
+            if state.settings.dwell_seconds_discharge_to_load is not None
+            else state.settings.minimum_action_dwell_seconds
+        ),
+        Action.EXPORT_TO_GRID: (
+            state.settings.dwell_seconds_export_to_grid
+            if state.settings.dwell_seconds_export_to_grid is not None
+            else state.settings.minimum_action_dwell_seconds
+        ),
+        Action.IDLE: (
+            state.settings.dwell_seconds_idle
+            if state.settings.dwell_seconds_idle is not None
+            else state.settings.minimum_action_dwell_seconds
+        ),
+    }
     if state.executor is None:
         state.executor = _select_executor(state.settings, dwell=state.dwell)
     if state.price_provider is None:
@@ -160,6 +183,25 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
     def on_shutdown() -> None:
         scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
         scheduler.shutdown()
+        # As a safety measure, reset grid setpoint to 0 on shutdown if using D-Bus executor
+        try:
+            with state.lock:
+                executor = state.executor
+            if isinstance(executor, DbusExecutor):
+                import dbus  # type: ignore
+
+                bus = dbus.SystemBus()
+                proxy = bus.get_object(
+                    "com.victronenergy.settings", "/Settings/CGwacs/AcPowerSetPoint"
+                )
+                try:
+                    iface = dbus.Interface(proxy, dbus_interface="com.victronenergy.BusItem")
+                    iface.SetValue(0)
+                except Exception:
+                    props = dbus.Interface(proxy, dbus_interface="org.freedesktop.DBus.Properties")
+                    props.Set("com.victronenergy.BusItem", "Value", 0)
+        except Exception as exc:
+            logger.warning("Failed to reset grid setpoint on shutdown: %s", exc)
 
     @app.get("/health")
     def health() -> dict:
@@ -169,6 +211,24 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
     def pause() -> StatusResponse:
         with state.lock:
             state.automation_paused = True
+            executor = state.executor
+        # Safety: if using D-Bus, reset grid setpoint to 0 on pause
+        try:
+            if isinstance(executor, DbusExecutor):
+                import dbus  # type: ignore
+
+                bus = dbus.SystemBus()
+                proxy = bus.get_object(
+                    "com.victronenergy.settings", "/Settings/CGwacs/AcPowerSetPoint"
+                )
+                try:
+                    iface = dbus.Interface(proxy, dbus_interface="com.victronenergy.BusItem")
+                    iface.SetValue(0)
+                except Exception:
+                    props = dbus.Interface(proxy, dbus_interface="org.freedesktop.DBus.Properties")
+                    props.Set("com.victronenergy.BusItem", "Value", 0)
+        except Exception as exc:
+            logger.warning("Failed to reset grid setpoint on pause: %s", exc)
         return status()
 
     @app.post("/resume")
@@ -195,8 +255,30 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
             with state.lock:
                 new_settings = update.apply_to(state.settings)
                 state.settings = new_settings
-                # update dwell controller with new minimum dwell
+                # update dwell controller with new minimum dwell and per-action dwell
                 state.dwell.minimum_dwell_seconds = new_settings.minimum_action_dwell_seconds
+                state.dwell.per_action_dwell_seconds = {
+                    Action.CHARGE_FROM_GRID: (
+                        new_settings.dwell_seconds_charge_from_grid
+                        if new_settings.dwell_seconds_charge_from_grid is not None
+                        else new_settings.minimum_action_dwell_seconds
+                    ),
+                    Action.DISCHARGE_TO_LOAD: (
+                        new_settings.dwell_seconds_discharge_to_load
+                        if new_settings.dwell_seconds_discharge_to_load is not None
+                        else new_settings.minimum_action_dwell_seconds
+                    ),
+                    Action.EXPORT_TO_GRID: (
+                        new_settings.dwell_seconds_export_to_grid
+                        if new_settings.dwell_seconds_export_to_grid is not None
+                        else new_settings.minimum_action_dwell_seconds
+                    ),
+                    Action.IDLE: (
+                        new_settings.dwell_seconds_idle
+                        if new_settings.dwell_seconds_idle is not None
+                        else new_settings.minimum_action_dwell_seconds
+                    ),
+                }
                 # swap executor if backend changed
                 state.executor = _select_executor(new_settings, dwell=state.dwell)
                 # swap provider only if selection, token or home changed
@@ -222,7 +304,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
                 # persist non-secret settings snapshot to disk
                 try:
                     state.settings.persist_to_disk()
-                except Exception:  # nosec B112
+                except Exception:
                     logger.warning("Failed to persist settings to disk")
                 return ConfigResponse(data=state.settings.to_public_dict())
         except Exception as exc:  # validation or other issues

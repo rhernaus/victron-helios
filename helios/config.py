@@ -20,6 +20,11 @@ class HeliosSettings(BaseSettings):
     dbus_update_interval_seconds: int = Field(default=10, ge=1)
     scheduler_timezone: str = Field(default="UTC")
     minimum_action_dwell_seconds: int = Field(default=0, ge=0)
+    # Optional per-action dwell seconds (fallback to minimum_action_dwell_seconds if unset)
+    dwell_seconds_charge_from_grid: Optional[int] = Field(default=None, ge=0)
+    dwell_seconds_discharge_to_load: Optional[int] = Field(default=None, ge=0)
+    dwell_seconds_export_to_grid: Optional[int] = Field(default=None, ge=0)
+    dwell_seconds_idle: Optional[int] = Field(default=None, ge=0)
     log_level: str = Field(default="INFO")
     data_dir: str = Field(default="/data/helios")
 
@@ -35,6 +40,8 @@ class HeliosSettings(BaseSettings):
     # Limits
     grid_import_limit_w: Optional[int] = Field(default=None, ge=0)
     grid_export_limit_w: Optional[int] = Field(default=None, ge=0)
+    # Optional ramping to avoid abrupt steps (Watts per second)
+    grid_ramp_w_per_second: Optional[int] = Field(default=None, ge=1)
 
     # Battery characteristics and policy
     battery_capacity_kwh: Optional[float] = Field(default=None, ge=0)
@@ -43,6 +50,8 @@ class HeliosSettings(BaseSettings):
     min_soc_percent: float = Field(default=10.0, ge=0, le=100)
     max_soc_percent: float = Field(default=95.0, ge=0, le=100)
     reserve_soc_percent: float = Field(default=40.0, ge=0, le=100)
+    # Best-effort assumed current SoC for simple policy heuristics (percent)
+    assumed_current_soc_percent: Optional[float] = None
 
     # Location & providers
     location_lat: Optional[float] = None
@@ -53,6 +62,10 @@ class HeliosSettings(BaseSettings):
 
     # Execution
     executor_backend: str = Field(default="noop")  # options: noop, dbus
+    # D-Bus reliability parameters
+    dbus_reassert_attempts: int = Field(default=2, ge=0)
+    dbus_write_retries: int = Field(default=2, ge=0)
+    dbus_write_retry_delay_seconds: float = Field(default=0.2, ge=0)
 
     def to_public_dict(self) -> dict:
         data = self.model_dump()
@@ -106,6 +119,10 @@ class ConfigUpdate(BaseModel):
     dbus_update_interval_seconds: Optional[int] = None
     scheduler_timezone: Optional[str] = None
     minimum_action_dwell_seconds: Optional[int] = None
+    dwell_seconds_charge_from_grid: Optional[int] = None
+    dwell_seconds_discharge_to_load: Optional[int] = None
+    dwell_seconds_export_to_grid: Optional[int] = None
+    dwell_seconds_idle: Optional[int] = None
 
     price_provider: Optional[str] = None
     price_hysteresis_eur_per_kwh: Optional[float] = None
@@ -117,6 +134,7 @@ class ConfigUpdate(BaseModel):
 
     grid_import_limit_w: Optional[int] = None
     grid_export_limit_w: Optional[int] = None
+    grid_ramp_w_per_second: Optional[int] = None
 
     battery_capacity_kwh: Optional[float] = None
     battery_charge_limit_w: Optional[int] = None
@@ -124,12 +142,17 @@ class ConfigUpdate(BaseModel):
     min_soc_percent: Optional[float] = None
     max_soc_percent: Optional[float] = None
     reserve_soc_percent: Optional[float] = None
+    assumed_current_soc_percent: Optional[float] = None
 
     location_lat: Optional[float] = None
     location_lon: Optional[float] = None
     tibber_token: Optional[str] = None
+    tibber_home_id: Optional[str] = None
     openweather_api_key: Optional[str] = None
     executor_backend: Optional[str] = None
+    dbus_reassert_attempts: Optional[int] = None
+    dbus_write_retries: Optional[int] = None
+    dbus_write_retry_delay_seconds: Optional[float] = None
 
     def apply_to(self, settings: HeliosSettings) -> HeliosSettings:
         """Return a new validated settings instance with the updates applied atomically."""
