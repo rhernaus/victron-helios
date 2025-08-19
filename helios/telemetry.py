@@ -90,27 +90,37 @@ class DbusTelemetryReader(TelemetryReader):  # pragma: no cover - hardware speci
                     total_pv += float(v)
             snap.solar_w = int(total_pv) if total_pv else None
 
-            # EV Charger: any evcharger service
+            # EV Charger: detect any service under com.victronenergy.evcharger.*
             try:
                 names = bus.list_names()
             except Exception:
                 names = []
             ev_status: dict = {}
             for name in names:
-                if not str(name).startswith("com.victronenergy.evcharger"):
+                if not str(name).startswith("com.victronenergy.evcharger."):
                     continue
-                fields = [
+                # read a superset of common fields; tolerate device-specific variants
+                candidates = [
                     "/Mode",
-                    "/State",
-                    "/Enabled",
+                    "/Status",  # common on evchargers
+                    "/State",  # some models
+                    "/StartStop",
                     "/Connected",
                     "/Charging",
+                    "/Ac/Power",
                     "/Power",
+                    "/Ac/Current",
                     "/Current",
+                    "/SetCurrent",
+                    "/MaxCurrent",
+                    "/ChargingTime",
+                    "/ProductName",
+                    "/FirmwareVersion",
+                    "/Serial",
                 ]
-                for p in fields:
+                for p in candidates:
                     val = self._read_value(bus, name, p)
-                    if val is not None:
+                    if val is not None and val != []:
                         ev_status[p] = val
                 if ev_status:
                     break
