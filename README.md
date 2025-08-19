@@ -42,6 +42,15 @@ Current endpoints:
 
 Settings can be updated at runtime via `PUT /config` and are also loadable via environment variables (`HELIOS_` prefix). Secret fields are redacted from `GET /config` responses.
 
+### Settings storage & persistence
+
+- Non‑secret settings are persisted to JSON at `/data/helios/settings.json` when you save via the API or Web UI.
+- On startup, Helios loads that file (if present) and overlays it onto defaults and any environment variables.
+- The Web UI always shows the live in‑memory configuration from `GET /config`; manual edits to the JSON file will not appear until the server is restarted.
+- Secrets (e.g., `tibber_token`, `openweather_api_key`) are not written to disk and are not returned by the API; only `*_present` booleans are exposed.
+- To persist secrets across restarts, set environment variables (e.g., `HELIOS_TIBBER_TOKEN`) or place them in a `.env` file in the app directory. YAML config is not used.
+- The data directory is configurable via `HELIOS_DATA_DIR` (defaults to `/data/helios`).
+
 ### Running on Cerbo GX
 
 Follow these steps on a Victron Cerbo GX (Venus OS):
@@ -94,7 +103,7 @@ cd /data/helios
 uvicorn main:app --host 127.0.0.1 --port 8080 &
 ```
 
-- Data and configuration live under `/data/helios` (e.g., `/data/helios/settings.yaml`).
+- Data and configuration live under `/data/helios` (e.g., `/data/helios/settings.json`).
 - Ensure D-Bus write access to `/Settings/CGwacs/AcPowerSetPoint` for ESS control.
 - Note: `uvicorn[standard]` extras are not required on device; plain `uvicorn` is sufficient.
 
