@@ -57,17 +57,3 @@ def _reset_state_for_testing() -> None:
     """Reset global state singleton. For test usage only."""
     global _global_state
     _global_state = None
-
-
-from .providers import PriceProvider, ForecastProvider
-from .telemetry import TelemetryReader, TelemetrySnapshot, NoOpTelemetryReader
-
-try:
-    # Optional: lightweight SQL storage for telemetry/history in future
-    import sqlite3  # noqa: F401
-except Exception:  # pragma: no cover - optional
-    sqlite3 = None  # type: ignore
-
-if TYPE_CHECKING:
-    from .planner import Planner
-    from .scheduler import HeliosScheduler
