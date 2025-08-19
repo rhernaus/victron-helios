@@ -33,4 +33,5 @@ def test_build_plan_uses_time_slices_and_returns_slots():
     plan = planner.build_plan(price_series=prices, now=now)
     assert plan.planning_window_seconds == settings.planning_window_seconds
     assert len(plan.slots) == int(24 * 3600 / settings.planning_window_seconds)
-    assert plan.slots[0].start == now
+    # When window divides an hour, slots align to the hour boundary
+    assert plan.slots[0].start == now.replace(minute=0, second=0, microsecond=0)
