@@ -135,8 +135,19 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
             try:
                 merged = {**state.settings.model_dump(), **loaded}
                 state.settings = HeliosSettings.model_validate(merged)
-            except Exception:
-                logger.warning("Failed to load settings from disk; using defaults")
+            except Exception as exc:
+                # Provide actionable diagnostics so users can see exactly why
+                # the persisted settings could not be applied on startup.
+                try:
+                    loaded_keys = list(loaded.keys())
+                except Exception:
+                    loaded_keys = []
+                logger.exception(
+                    "Failed to load settings from disk at startup; using defaults. "
+                    "error=%s loaded_keys=%s",
+                    exc,
+                    loaded_keys,
+                )
 
     # Initialize planner and scheduler if not already
     if state.planner is None:
