@@ -26,6 +26,7 @@
       <button class="tab" data-tab="plan">Plan</button>
       <button class="tab" data-tab="config">Config</button>
       <button class="tab" data-tab="metrics">Metrics</button>
+      <button class="tab" data-tab="telemetry">Telemetry</button>
     </nav>
 
     <section id="tab-status" class="tab-panel active">
@@ -35,6 +36,9 @@
           <div class="kv"><span>Paused</span><span id="automation-paused">—</span></div>
           <div class="kv"><span>Last plan</span><span id="last-recalc">—</span></div>
           <div class="kv"><span>Last control</span><span id="last-control">—</span></div>
+          <div class="kv"><span>Current action</span><span id="current-action">—</span></div>
+          <div class="kv"><span>Current setpoint</span><span id="current-setpoint">—</span></div>
+          <div class="kv"><span>Reason</span><span id="current-reason" class="muted">—</span></div>
         </div>
 
         <div class="card">
@@ -57,7 +61,9 @@
             <input id="auto-refresh" type="checkbox" checked />
             <span>Auto-refresh</span>
           </label>
+          <button id="btn-recalc-now" class="btn btn-outline">Recalculate now</button>
         </div>
+        <div id="plan-summary" class="muted" style="margin: 0 0 8px 0;">—</div>
         <div id="plan-container" class="plan-list">
           <div class="muted">Loading plan…</div>
         </div>
@@ -86,6 +92,12 @@
             </label>
             <label>Executor backend
               <select id="executor_backend">
+                <option value="noop">noop</option>
+                <option value="dbus">dbus</option>
+              </select>
+            </label>
+            <label>Telemetry backend
+              <select id="telemetry_backend">
                 <option value="noop">noop</option>
                 <option value="dbus">dbus</option>
               </select>
@@ -145,6 +157,18 @@
         <pre id="metrics" class="metrics"></pre>
       </div>
     </section>
+
+    <section id="tab-telemetry" class="tab-panel">
+      <div class="cards">
+        <div class="card">
+          <h3>Live Telemetry</h3>
+          <div class="kv"><span>Battery SoC</span><span id="telemetry-soc">—</span></div>
+          <div class="kv"><span>Load</span><span id="telemetry-load">—</span></div>
+          <div class="kv"><span>Solar</span><span id="telemetry-solar">—</span></div>
+          <div class="kv"><span>EV Charger</span><span id="telemetry-ev">—</span></div>
+        </div>
+      </div>
+    </section>
   </main>
 
   <div id="toast" class="toast" hidden></div>
@@ -152,4 +176,3 @@
   <script src="./app.js"></script>
 </body>
 </html>
-

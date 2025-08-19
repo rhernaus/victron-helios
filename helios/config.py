@@ -18,6 +18,7 @@ class HeliosSettings(BaseSettings):
     planning_horizon_hours: int = Field(default=24, ge=1, le=48)
     recalculation_interval_seconds: int = Field(default=300, ge=30)
     dbus_update_interval_seconds: int = Field(default=10, ge=1)
+    telemetry_update_interval_seconds: int = Field(default=10, ge=1)
     scheduler_timezone: str = Field(default="UTC")
     minimum_action_dwell_seconds: int = Field(default=0, ge=0)
     # Optional per-action dwell seconds (fallback to minimum_action_dwell_seconds if unset)
@@ -60,8 +61,10 @@ class HeliosSettings(BaseSettings):
     tibber_home_id: Optional[str] = None
     openweather_api_key: Optional[str] = None
 
-    # Execution
+    # Execution (write)
     executor_backend: str = Field(default="noop")  # options: noop, dbus
+    # Telemetry (read)
+    telemetry_backend: str = Field(default="noop")  # options: noop, dbus
     # D-Bus reliability parameters
     dbus_reassert_attempts: int = Field(default=2, ge=0)
     dbus_write_retries: int = Field(default=2, ge=0)
@@ -117,6 +120,7 @@ class ConfigUpdate(BaseModel):
     planning_horizon_hours: Optional[int] = None
     recalculation_interval_seconds: Optional[int] = None
     dbus_update_interval_seconds: Optional[int] = None
+    telemetry_update_interval_seconds: Optional[int] = None
     scheduler_timezone: Optional[str] = None
     minimum_action_dwell_seconds: Optional[int] = None
     dwell_seconds_charge_from_grid: Optional[int] = None
@@ -150,6 +154,7 @@ class ConfigUpdate(BaseModel):
     tibber_home_id: Optional[str] = None
     openweather_api_key: Optional[str] = None
     executor_backend: Optional[str] = None
+    telemetry_backend: Optional[str] = None
     dbus_reassert_attempts: Optional[int] = None
     dbus_write_retries: Optional[int] = None
     dbus_write_retry_delay_seconds: Optional[float] = None

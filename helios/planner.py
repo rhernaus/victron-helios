@@ -40,17 +40,33 @@ class Planner:
 
             action, setpoint = self._decide_action(price_mid, pivot)
 
+            # Provide a brief reason per slot mirroring the decision at midpoint
+            reason = self._reason_for(action, setpoint, price_mid, pivot)
             slots.append(
                 PlanSlot(
                     start=t,
                     end=slice_end,
                     action=action,
                     target_grid_setpoint_w=setpoint,
+                    reason=reason,
                 )
             )
             t = slice_end
 
-        return Plan(generated_at=generated_at, planning_window_seconds=window, slots=slots)
+        # Build a brief plan summary
+        num_charge = sum(1 for s in slots if s.action == Action.CHARGE_FROM_GRID)
+        num_export = sum(1 for s in slots if s.action == Action.EXPORT_TO_GRID)
+        num_idle = sum(1 for s in slots if s.action == Action.IDLE)
+        summary = (
+            f"H{horizon_hours}h: charge={num_charge}, export={num_export}, "
+            f"idle={num_idle}; pivot={pivot:.3f}"
+        )
+        return Plan(
+            generated_at=generated_at,
+            planning_window_seconds=window,
+            slots=slots,
+            summary=summary,
+        )
 
     def _decide_action(self, price_mid: float, pivot: float) -> tuple[Action, int]:
         # Simple heuristic:
@@ -95,6 +111,7 @@ class Planner:
                 setpoint = 0
             else:
                 setpoint = min(import_limit, battery_charge_limit)
+                # Keep a compact explanatory string under lint limits (not used here)
         elif self.settings.grid_sell_enabled and expensive and export_limit > 0:
             action = Action.EXPORT_TO_GRID
             # Negative setpoint for export; clamp by grid and battery discharge limit
@@ -104,8 +121,34 @@ class Planner:
                 setpoint = 0
             else:
                 setpoint = -min(export_limit, battery_discharge_limit)
+        else:
+            # No need to keep reason here; caller derives a message
+            pass
 
         return action, setpoint
+
+    def _reason_for(self, action: Action, setpoint: int, price_mid: float, pivot: float) -> str:
+        # Synthesize a compact explanation based on the same logic
+        hysteresis = self.settings.price_hysteresis_eur_per_kwh
+        buy_price = (
+            price_mid * self.settings.buy_price_multiplier
+            + self.settings.buy_price_fixed_fee_eur_per_kwh
+        )
+        sell_price = (
+            price_mid * self.settings.sell_price_multiplier
+            - self.settings.sell_price_fixed_deduction_eur_per_kwh
+        )
+        if action == Action.CHARGE_FROM_GRID:
+            return (
+                f"cheap {buy_price:.3f} <= pivot-hyst {(pivot - hysteresis):.3f}; "
+                f"setpoint {setpoint}W"
+            )
+        if action == Action.EXPORT_TO_GRID:
+            return (
+                f"expensive {sell_price:.3f} >= pivot+hyst {(pivot + hysteresis):.3f}; "
+                f"setpoint {setpoint}W"
+            )
+        return "idle: price within hysteresis or constrained"
 
     @staticmethod
     def _price_at(series: list[tuple[datetime, float]], at: datetime) -> Optional[float]:

@@ -25,6 +25,7 @@ from .models import Action, ConfigResponse, Plan, StatusResponse
 from .planner import Planner
 from .providers import PriceProvider, StubPriceProvider, TibberPriceProvider
 from .scheduler import HeliosScheduler
+from .telemetry import DbusTelemetryReader, NoOpTelemetryReader, TelemetrySnapshot
 from .state import HeliosState, get_state
 
 logger = logging.getLogger("helios")
@@ -43,6 +44,12 @@ def _select_executor(settings: HeliosSettings, dwell) -> Executor:
     if settings.executor_backend == "dbus":
         return DbusExecutor(dwell=dwell, settings=settings)
     return NoOpExecutor(dwell=dwell)
+
+
+def _select_telemetry_reader(settings: HeliosSettings):
+    if getattr(settings, "telemetry_backend", "noop") == "dbus":
+        return DbusTelemetryReader()
+    return NoOpTelemetryReader()
 
 
 def _recalc_plan(state: HeliosState) -> None:
@@ -165,6 +172,8 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
         state.executor = _select_executor(state.settings, dwell=state.dwell)
     if state.price_provider is None:
         state.price_provider = _select_price_provider(state.settings)
+    if state.telemetry_reader is None:
+        state.telemetry_reader = _select_telemetry_reader(state.settings)
 
     def recalc_job():
         recalc_job_runs_total.inc()
@@ -174,12 +183,24 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
         control_job_runs_total.inc()
         _do_control(state)
 
+    def telemetry_job():
+        try:
+            reader = state.telemetry_reader or NoOpTelemetryReader()
+            snap = reader.read()
+            with state.lock:
+                state.last_telemetry = snap
+        except Exception as exc:
+            # Keep last snapshot but record the failure for diagnostics
+            logger.debug("Telemetry read failed: %s", exc)
+
     @app.on_event("startup")
     def on_startup() -> None:
         scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
-        scheduler.start(recalc_job=recalc_job, control_job=control_job)
+        scheduler.start(recalc_job=recalc_job, control_job=control_job, telemetry_job=telemetry_job)
         # trigger immediate first plan
         recalc_job()
+        # prime telemetry once quickly
+        telemetry_job()
 
     @app.on_event("shutdown")
     def on_shutdown() -> None:
@@ -207,6 +228,11 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
 
     @app.get("/health")
     def health() -> dict:
+        return {"status": "ok"}
+
+    @app.post("/recalc")
+    def force_recalc() -> dict:
+        _recalc_plan(state)
         return {"status": "ok"}
 
     @app.post("/pause")
@@ -300,9 +326,13 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                         swap = True
                 if swap or current_provider is None:
                     state.price_provider = desired_provider
+                # swap telemetry reader
+                state.telemetry_reader = _select_telemetry_reader(new_settings)
                 # reschedule with new intervals
                 scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
-                scheduler.reschedule(recalc_job=recalc_job, control_job=control_job)
+                scheduler.reschedule(
+                    recalc_job=recalc_job, control_job=control_job, telemetry_job=telemetry_job
+                )
                 # persist non-secret settings snapshot to disk
                 try:
                     state.settings.persist_to_disk()
@@ -315,10 +345,29 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
     @app.get("/status", response_model=StatusResponse)
     def status() -> StatusResponse:
         with state.lock:
+            # Try to derive current slot and reasoning
+            current_action = None
+            current_setpoint = None
+            current_reason = None
+            if state.latest_plan is not None:
+                slot = state.latest_plan.slot_for(datetime.now(timezone.utc))
+                if slot is not None:
+                    current_action = slot.action
+                    current_setpoint = slot.target_grid_setpoint_w
+                    current_reason = getattr(slot, "reason", None)
+
+            tel: TelemetrySnapshot = state.last_telemetry
             return StatusResponse(
                 automation_paused=state.automation_paused,
                 last_recalc_at=state.last_recalc_at,
                 last_control_at=state.last_control_at,
+                current_action=current_action,
+                current_setpoint_w=current_setpoint,
+                current_reason=current_reason,
+                soc_percent=tel.soc_percent,
+                load_w=tel.load_w,
+                solar_w=tel.solar_w,
+                ev_charger_status=tel.ev_status,
             )
 
     @app.get("/plan")
