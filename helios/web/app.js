@@ -159,6 +159,7 @@ async function saveQuick() {
     grid_sell_enabled: $('#grid_sell_enabled').value,
     price_hysteresis_eur_per_kwh: $('#price_hysteresis_eur_per_kwh').value ? Number($('#price_hysteresis_eur_per_kwh').value) : null,
     executor_backend: $('#executor_backend').value,
+    telemetry_backend: $('#telemetry_backend').value,
     price_provider: $('#price_provider').value,
     assumed_current_soc_percent: $('#assumed_current_soc_percent').value ? Number($('#assumed_current_soc_percent').value) : null,
   };
