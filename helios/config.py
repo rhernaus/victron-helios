@@ -85,9 +85,13 @@ class HeliosSettings(BaseSettings):
 
         os.makedirs(self.data_dir, exist_ok=True)
         path = os.path.join(self.data_dir, "settings.json")
-        # Persist a sanitized copy with secrets omitted
+        # Persist a sanitized copy with secrets omitted. Do not include
+        # derived "*_present" booleans which are intended for API display only.
+        data = dict(self.to_public_dict())
+        data.pop("tibber_token_present", None)
+        data.pop("openweather_api_key_present", None)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(self.to_public_dict(), f, indent=2, sort_keys=True)
+            json.dump(data, f, indent=2, sort_keys=True)
 
     @staticmethod
     def load_from_disk(data_dir: str) -> dict | None:
@@ -98,7 +102,14 @@ class HeliosSettings(BaseSettings):
         if not os.path.exists(path):
             return None
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
+            raw = json.load(f)
+        # Drop any unknown/derived keys to keep forward/backward compatibility.
+        try:
+            valid_keys = set(HeliosSettings.model_fields.keys())
+        except Exception:
+            valid_keys = set()
+        sanitized = {k: v for k, v in raw.items() if k in valid_keys}
+        return sanitized
 
     @model_validator(mode="after")
     def _validate_invariants(self) -> HeliosSettings:
