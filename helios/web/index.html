@@ -61,7 +61,25 @@
             <input id="auto-refresh" type="checkbox" checked />
             <span>Auto-refresh</span>
           </label>
-          <span class="muted" style="margin-left:8px;font-size:12px;">Hover to see values; axes show hours and units</span>
+          <label class="toggle" style="margin-left:8px;gap:6px;align-items:center;">
+            <span>Range</span>
+            <select id="x-range">
+              <option value="auto">Auto</option>
+              <option value="plan">Plan window</option>
+              <option value="prices">Prices window</option>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="last24h">Last 24h</option>
+              <option value="next24h">Next 24h</option>
+              <option value="custom">Custom…</option>
+            </select>
+          </label>
+          <span id="x-range-custom" class="toggle" style="display:none;margin-left:6px;gap:6px;align-items:center;">
+            <input id="x-from" type="datetime-local" />
+            <input id="x-to" type="datetime-local" />
+            <button id="btn-apply-range" class="btn btn-outline">Apply</button>
+          </span>
+          <span class="muted" style="margin-left:8px;font-size:12px;">Hover to see values; axes show full hours; date at midnight</span>
           <button id="btn-recalc-now" class="btn btn-outline">Recalculate now</button>
         </div>
         <div id="plan-summary" class="muted" style="margin: 0 0 8px 0;">—</div>

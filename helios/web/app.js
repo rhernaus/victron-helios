@@ -2,6 +2,13 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
+// Global UI/app state for synchronized X-axis
+const __appState = {
+  xDomainMode: 'auto', // 'auto' | 'plan' | 'prices' | 'today' | 'yesterday' | 'last24h' | 'next24h' | 'custom'
+  xFromMs: null,
+  xToMs: null,
+};
+
 function fmtTime(iso) {
   if (!iso) return '—';
   try { return new Date(iso).toLocaleString(); } catch { return String(iso); }
@@ -97,6 +104,9 @@ async function refreshPlan() {
       container.appendChild(div);
     });
 
+    // Persist last loaded datasets and render charts
+    window.__lastPlan = p;
+    window.__lastPrices = priceData;
     // Render charts when plan and optional prices are available
     try { renderCharts(p, priceData); } catch(e) { /* best-effort; keep UI */ }
   } catch (e) {
@@ -279,6 +289,30 @@ function init() {
   $('#btn-load-metrics').addEventListener('click', loadMetrics);
   const recalcBtn = $('#btn-recalc-now'); if (recalcBtn) recalcBtn.addEventListener('click', doRecalcNow);
 
+  // Range selector for synchronized X-axis
+  const rangeSel = $('#x-range');
+  const customWrap = $('#x-range-custom');
+  const fromInp = $('#x-from');
+  const toInp = $('#x-to');
+  const applyBtn = $('#btn-apply-range');
+  if (rangeSel) {
+    const refreshFromState = () => { if (customWrap) customWrap.style.display = (rangeSel.value === 'custom') ? 'inline-flex' : 'none'; };
+    refreshFromState();
+    rangeSel.addEventListener('change', () => {
+      __appState.xDomainMode = rangeSel.value;
+      refreshFromState();
+      try { renderCharts(window.__lastPlan, window.__lastPrices); } catch(_) {}
+    });
+    if (applyBtn) {
+      applyBtn.addEventListener('click', () => {
+        const from = fromInp && fromInp.value ? new Date(fromInp.value).getTime() : null;
+        const to = toInp && toInp.value ? new Date(toInp.value).getTime() : null;
+        if (from && to && to > from) { __appState.xFromMs = from; __appState.xToMs = to; __appState.xDomainMode = 'custom'; }
+        try { renderCharts(window.__lastPlan, window.__lastPrices); } catch(_) {}
+      });
+    }
+  }
+
   // Header pause/resume
   $('#pause-resume').addEventListener('click', async (e) => {
     const paused = e.currentTarget.dataset.paused === 'true';
@@ -298,9 +332,10 @@ document.addEventListener('DOMContentLoaded', init);
 
 // ----- Charts (lightweight canvas rendering; no external deps) -----
 function renderCharts(plan, prices) {
-  drawPriceChart($('#chart-prices'), prices);
-  drawEnergyChart($('#chart-energy'), plan);
-  drawCostsChart($('#chart-costs'), plan, prices);
+  const domain = computeGlobalDomain(plan, prices);
+  drawPriceChart($('#chart-prices'), prices, domain);
+  drawEnergyChart($('#chart-energy'), plan, domain);
+  drawCostsChart($('#chart-costs'), plan, prices, domain);
 }
 
 function makeScale(domainMin, domainMax, rangeMin, rangeMax) {
@@ -313,7 +348,7 @@ function clearCanvas(canvas) {
   if (!canvas) return { ctx: null, W: 0, H: 0 };
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
-  const W = Math.min(2000, canvas.clientWidth || canvas.width);
+  const W = Math.min(1200, canvas.clientWidth || canvas.width);
   const H = canvas.clientHeight || canvas.height;
   canvas.width = Math.floor(W * dpr);
   canvas.height = Math.floor(H * dpr);
@@ -373,15 +408,78 @@ function timeDomainFromPlan(plan) {
   return [start, end];
 }
 
-function drawPriceChart(canvas, prices) {
+function timeDomainFromPrices(prices) {
+  const items = (prices && prices.items) ? prices.items : [];
+  if (!items.length) { const now = Date.now(); return [now, now + 3600_000]; }
+  const start = new Date(items[0].t).getTime();
+  const end = new Date(items[items.length - 1].t).getTime() + 3600_000;
+  return [start, end];
+}
+
+function computeGlobalDomain(plan, prices) {
+  const hour = 3600_000;
+  const [p0, p1] = timeDomainFromPlan(plan);
+  const [r0, r1] = timeDomainFromPrices(prices);
+  const union = [Math.min(p0, r0), Math.max(p1, r1)];
+  const now = Date.now();
+  switch (__appState.xDomainMode) {
+    case 'plan': return [p0, p1];
+    case 'prices': return [r0, r1];
+    case 'today': {
+      const d = new Date(); d.setHours(0,0,0,0); const from = d.getTime(); return [from, from + 24*hour];
+    }
+    case 'yesterday': {
+      const d = new Date(); d.setHours(0,0,0,0); const to = d.getTime(); return [to - 24*hour, to];
+    }
+    case 'last24h': return [now - 24*hour, now];
+    case 'next24h': return [now, now + 24*hour];
+    case 'custom': {
+      if (__appState.xFromMs && __appState.xToMs && __appState.xToMs > __appState.xFromMs) return [__appState.xFromMs, __appState.xToMs];
+      return union;
+    }
+    case 'auto':
+    default: return union;
+  }
+}
+
+function formatLocalDate(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+
+function drawHourTicks(ctx, x, tmin, tmax, H, padL, padR) {
+  const hour = 3600_000;
+  let t = Math.ceil(tmin / hour) * hour;
+  const pxHour = (x(t + hour) - x(t)) || 0;
+  const step = pxHour < 36 ? 2 * hour : hour;
+  ctx.fillStyle = 'rgba(255,255,255,.6)';
+  ctx.textAlign = 'center';
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.strokeStyle = 'rgba(255,255,255,.06)';
+  ctx.lineWidth = 1;
+  for (; t <= tmax; t += hour) {
+    const tx = x(t);
+    ctx.beginPath(); ctx.moveTo(tx, 10); ctx.lineTo(tx, H - 24); ctx.stroke();
+    const d = new Date(t);
+    const isMidnight = d.getHours() === 0;
+    const idx = Math.round((t - Math.ceil(tmin/hour)*hour) / hour);
+    if (isMidnight || (idx % (step/hour) === 0)) {
+      const label = isMidnight ? formatLocalDate(d) : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      ctx.fillText(label, tx, H - 8);
+    }
+  }
+}
+
+function drawPriceChart(canvas, prices, domainOverride) {
   if (!canvas) return;
   const { ctx, W, H } = clearCanvas(canvas);
   if (!ctx) return;
   const padL = 40, padB = 24, padT = 10, padR = 10;
 
   const items = (prices && prices.items) ? prices.items : [];
-  const tmin = items.length ? new Date(items[0].t).getTime() : Date.now();
-  const tmax = items.length ? new Date(items[items.length-1].t).getTime() + 3600_000 : tmin + 3600_000;
+  let tmin = items.length ? new Date(items[0].t).getTime() : Date.now();
+  let tmax = items.length ? new Date(items[items.length-1].t).getTime() + 3600_000 : tmin + 3600_000;
+  if (domainOverride) { tmin = domainOverride[0]; tmax = domainOverride[1]; }
   const ymin = Math.min(0, ...items.map(i => Math.min(i.buy ?? i.raw, i.sell ?? i.raw)));
   const ymax = Math.max(0.01, ...items.map(i => Math.max(i.buy ?? i.raw, i.sell ?? i.raw)));
   const x = makeScale(tmin, tmax, padL, W - padR);
@@ -430,16 +528,8 @@ function drawPriceChart(canvas, prices) {
   drawLine('buy', '#ef4444');
   drawLine('sell', '#84cc16');
 
-  // X-axis hour ticks
-  ctx.fillStyle = 'rgba(255,255,255,.6)';
-  ctx.textAlign = 'center';
-  for (let i = 0; i < items.length; i++) {
-    if (i % 2) continue;
-    const tt = new Date(items[i].t).getTime();
-    const tx = x(tt);
-    const label = new Date(tt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-    ctx.fillText(label, tx, H - 8);
-  }
+  // Shared hour ticks
+  drawHourTicks(ctx, x, tmin, tmax, H, padL, padR);
 
   // legend
   const legend = $('#legend-prices');
@@ -468,13 +558,14 @@ function drawPriceChart(canvas, prices) {
   });
 }
 
-function drawEnergyChart(canvas, plan) {
+function drawEnergyChart(canvas, plan, domainOverride) {
   if (!canvas) return;
   const { ctx, W, H } = clearCanvas(canvas);
   if (!ctx) return;
   const padL = 40, padB = 24, padT = 10, padR = 10;
 
-  const [tmin, tmax] = timeDomainFromPlan(plan);
+  let [tmin, tmax] = timeDomainFromPlan(plan);
+  if (domainOverride) { tmin = domainOverride[0]; tmax = domainOverride[1]; }
   const x = makeScale(tmin, tmax, padL, W - padR);
   const ymin = -1; // dynamic below
   const ymax = 1;
@@ -511,8 +602,8 @@ function drawEnergyChart(canvas, plan) {
   const y = makeScale(vmin, vmax, H - padB, padT);
   drawAxes(ctx, W, H, y(0));
 
-  // bar width
-  const barW = Math.max(2, (W - padL - padR) / bars.length - 2);
+  const slotMs = (plan.planning_window_seconds || 900) * 1000;
+  const barW = Math.max(2, x(tmin + slotMs) - x(tmin) - 2);
 
   // draw stacked bars
   const now = Date.now();
@@ -550,15 +641,8 @@ function drawEnergyChart(canvas, plan) {
     <div class="key"><span class="swatch" style="background:#ec4899"></span> From grid to battery</div>
   `;
 
-  // X-axis labels
-  ctx.fillStyle = 'rgba(255,255,255,.6)';
-  ctx.textAlign = 'center';
-  for (let i = 0; i < bars.length; i++) {
-    if (i % 2) continue;
-    const tx = x(bars[i].t);
-    const label = new Date(bars[i].t).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-    ctx.fillText(label, tx + barW/2, H - 8);
-  }
+  // Shared hour ticks
+  drawHourTicks(ctx, x, tmin, tmax, H, padL, padR);
 
   // Hover tooltip (stacked totals)
   attachHover(canvas, (mx, my) => {
@@ -584,7 +668,7 @@ function drawEnergyChart(canvas, plan) {
   });
 }
 
-function drawCostsChart(canvas, plan, prices) {
+function drawCostsChart(canvas, plan, prices, domainOverride) {
   if (!canvas) return;
   const { ctx, W, H } = clearCanvas(canvas);
   if (!ctx) return;
@@ -622,16 +706,17 @@ function drawCostsChart(canvas, plan, prices) {
     }
     return { t: new Date(s.start).getTime(), gridCost, gridSave, battCost };
   });
+  let tmin = bars.length ? bars[0].t : Date.now();
+  let tmax = bars.length ? bars[bars.length-1].t + slotSecs*1000 : tmin + 3600_000;
+  if (domainOverride) { tmin = domainOverride[0]; tmax = domainOverride[1]; }
 
-  const tmin = bars.length ? bars[0].t : Date.now();
-  const tmax = bars.length ? bars[bars.length-1].t + slotSecs*1000 : tmin + 3600_000;
   const vmax = Math.max(0.01, ...bars.map(b => b.gridSave));
   const vmin = -Math.max(0.01, ...bars.map(b => Math.max(b.gridCost, b.battCost)));
   const x = makeScale(tmin, tmax, padL, W - padR);
   const y = makeScale(vmin, vmax, H - padB, padT);
   drawAxes(ctx, W, H, y(0));
 
-  const barW = Math.max(2, (W - padL - padR) / bars.length - 4);
+  const barW = Math.max(2, x(tmin + slotSecs*1000) - x(tmin) - 4);
   const now = Date.now();
   bars.forEach(b => {
     const cx = x(b.t) + 2;
@@ -658,15 +743,8 @@ function drawCostsChart(canvas, plan, prices) {
     <div class=\"key\"><span class=\"swatch\" style=\"background:#60a5fa\"></span> Battery costs</div>
   `;
 
-  // X-axis labels
-  ctx.fillStyle = 'rgba(255,255,255,.6)';
-  ctx.textAlign = 'center';
-  for (let i = 0; i < bars.length; i++) {
-    if (i % 2) continue;
-    const tx = x(bars[i].t);
-    const label = new Date(bars[i].t).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-    ctx.fillText(label, tx + barW/2, H - 8);
-  }
+  // Shared hour ticks
+  drawHourTicks(ctx, x, tmin, tmax, H, padL, padR);
 
   // Hover tooltip
   attachHover(canvas, (mx, my) => {
