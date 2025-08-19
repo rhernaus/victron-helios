@@ -81,9 +81,13 @@ async function refreshPlan() {
   const container = $('#plan-container');
   try {
     const p = await api('/plan');
-    // Also fetch price series for graphs
+    // Also fetch price series for graphs for current domain
     let priceData = null;
-    try { priceData = await api('/prices'); } catch (_) { priceData = null; }
+    try {
+      const domain = computeGlobalDomain(p, window.__lastPrices);
+      const qs = domain ? `?from=${Math.floor(domain[0]/1000)}&to=${Math.floor(domain[1]/1000)}` : '';
+      priceData = await api('/prices' + qs);
+    } catch (_) { priceData = null; }
     const now = Date.now();
     if ($('#plan-summary')) $('#plan-summary').textContent = p.summary || '—';
     container.innerHTML = '';
@@ -301,14 +305,24 @@ function init() {
     rangeSel.addEventListener('change', () => {
       __appState.xDomainMode = rangeSel.value;
       refreshFromState();
-      try { renderCharts(window.__lastPlan, window.__lastPrices); } catch(_) {}
+      const p = window.__lastPlan;
+      const domain = computeGlobalDomain(p, window.__lastPrices);
+      const qs = domain ? `?from=${Math.floor(domain[0]/1000)}&to=${Math.floor(domain[1]/1000)}` : '';
+      api('/prices' + qs)
+        .then((pd) => { window.__lastPrices = pd; renderCharts(p, pd); })
+        .catch(() => { try { renderCharts(p, window.__lastPrices); } catch(_) {} });
     });
     if (applyBtn) {
       applyBtn.addEventListener('click', () => {
         const from = fromInp && fromInp.value ? new Date(fromInp.value).getTime() : null;
         const to = toInp && toInp.value ? new Date(toInp.value).getTime() : null;
         if (from && to && to > from) { __appState.xFromMs = from; __appState.xToMs = to; __appState.xDomainMode = 'custom'; }
-        try { renderCharts(window.__lastPlan, window.__lastPrices); } catch(_) {}
+        const p = window.__lastPlan;
+        const domain = computeGlobalDomain(p, window.__lastPrices);
+        const qs = domain ? `?from=${Math.floor(domain[0]/1000)}&to=${Math.floor(domain[1]/1000)}` : '';
+        api('/prices' + qs)
+          .then((pd) => { window.__lastPrices = pd; renderCharts(p, pd); })
+          .catch(() => { try { renderCharts(p, window.__lastPrices); } catch(_) {} });
       });
     }
   }

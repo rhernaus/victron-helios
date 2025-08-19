@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Response, Query
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -264,6 +264,10 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                             "soc REAL, load INTEGER, solar INTEGER)"
                         )
                         conn.execute(
+                            "CREATE TABLE IF NOT EXISTS prices ("
+                            "ts INTEGER PRIMARY KEY, raw REAL)"
+                        )
+                        conn.execute(
                             (
                                 "INSERT OR REPLACE INTO telemetry("
                                 "ts, soc, load, solar) VALUES (?, ?, ?, ?)"
@@ -361,23 +365,55 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
         return Response(content=data, media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/telemetry/history")
-    def telemetry_history(limit: int = 500) -> dict:
+    def telemetry_history(
+        limit: int = 500,
+        from_: Optional[str] = Query(default=None, alias="from"),
+        to: Optional[str] = Query(default=None, alias="to"),
+    ) -> dict:
         """Return recent telemetry rows from the local SQLite store.
 
         This is a simple built-in time-series store to bootstrap forecasting.
         """
+        def _parse_ts(q: Optional[str]) -> Optional[int]:
+            if q is None:
+                return None
+            try:
+                v = int(q)
+                # support ms
+                if v > 10**12:
+                    v = v // 1000
+                return v
+            except Exception:
+                try:
+                    dt = datetime.fromisoformat(q.replace("Z", "+00:00"))
+                    return int(dt.timestamp())
+                except Exception:
+                    return None
+
+        fr = _parse_ts(from_)
+        to_ts = _parse_ts(to)
+
         try:
             db_path = Path(state.settings.data_dir) / "telemetry.db"
             with closing(sqlite3.connect(str(db_path))) as conn:
-                rows = list(
-                    conn.execute(
-                        "SELECT ts, soc, load, solar FROM telemetry ORDER BY ts DESC LIMIT ?",
-                        (int(max(1, min(10000, limit))),),
+                if fr is not None and to_ts is not None:
+                    rows = list(
+                        conn.execute(
+                            "SELECT ts, soc, load, solar FROM telemetry WHERE ts >= ? AND ts <= ? ORDER BY ts ASC",
+                            (fr, to_ts),
+                        )
                     )
-                )
+                else:
+                    rows = list(
+                        conn.execute(
+                            "SELECT ts, soc, load, solar FROM telemetry ORDER BY ts DESC LIMIT ?",
+                            (int(max(1, min(10000, limit))),),
+                        )
+                    )
         except Exception:
             rows = []
-        rows.reverse()
+        if fr is None or to_ts is None:
+            rows.reverse()
         items = []
         for r in rows:
             items.append(
@@ -500,7 +536,10 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
             return state.latest_plan.model_dump()
 
     @app.get("/prices")
-    def get_prices() -> dict:  # pragma: no cover - exercised via UI, not tests
+    def get_prices(
+        from_: Optional[str] = Query(default=None, alias="from"),
+        to: Optional[str] = Query(default=None, alias="to"),
+    ) -> dict:  # pragma: no cover - exercised via UI, not tests
         """Return the current planning horizon price series and derived buy/sell prices.
 
         The response schema is intentionally simple for the web UI and not versioned.
@@ -515,12 +554,92 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                 state.price_provider = provider_to_use
 
         now = datetime.now(timezone.utc)
-        start_hour = now.replace(minute=0, second=0, microsecond=0)
-        horizon_hours = settings_snapshot.planning_horizon_hours
+        # Parse optional range params (epoch seconds or ISO). Default to planning horizon
+        def _parse_ts(q: Optional[str]) -> Optional[int]:
+            if q is None:
+                return None
+            try:
+                v = int(q)
+                if v > 10**12:
+                    v = v // 1000
+                return v
+            except Exception:
+                try:
+                    dt = datetime.fromisoformat(q.replace("Z", "+00:00"))
+                    return int(dt.timestamp())
+                except Exception:
+                    return None
 
-        raw_series = provider_to_use.get_prices(
-            start_hour, start_hour + timedelta(hours=horizon_hours)
-        )
+        fr = _parse_ts(from_)
+        to_ts = _parse_ts(to)
+
+        if fr is None or to_ts is None:
+            start_hour = now.replace(minute=0, second=0, microsecond=0)
+            horizon_hours = settings_snapshot.planning_horizon_hours
+            start_dt = start_hour
+            end_dt = start_hour + timedelta(hours=horizon_hours)
+        else:
+            start_dt = datetime.fromtimestamp(fr, tz=timezone.utc).replace(
+                minute=0, second=0, microsecond=0
+            )
+            # inclusive end; extend to cover final hour
+            end_dt = (
+                datetime.fromtimestamp(to_ts, tz=timezone.utc)
+                .replace(minute=0, second=0, microsecond=0)
+                + timedelta(hours=1)
+            )
+
+        # Prepare local store if available and query existing rows
+        rows_from_db: list[tuple[int, float]] = []
+        db_path = Path(state.settings.data_dir) / "telemetry.db"
+        if sqlite3 is not None:
+            try:
+                with closing(sqlite3.connect(str(db_path))) as conn:
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS prices (ts INTEGER PRIMARY KEY, raw REAL)"
+                    )
+                    cur = conn.execute(
+                        "SELECT ts, raw FROM prices WHERE ts >= ? AND ts < ? ORDER BY ts ASC",
+                        (int(start_dt.timestamp()), int(end_dt.timestamp())),
+                    )
+                    rows_from_db = list(cur)
+            except Exception as db_exc:
+                logger.debug("Price DB read failed: %s", db_exc)
+
+        have_map = {ts: raw for (ts, raw) in rows_from_db}
+
+        # Fetch from provider for the requested range, then backfill DB for missing rows
+        raw_series = provider_to_use.get_prices(start_dt, end_dt)
+        if sqlite3 is not None:
+            try:
+                with closing(sqlite3.connect(str(db_path))) as conn:
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS prices (ts INTEGER PRIMARY KEY, raw REAL)"
+                    )
+                    for ts_dt, raw in raw_series:
+                        ts = int(ts_dt.replace(minute=0, second=0, microsecond=0).timestamp())
+                        if ts not in have_map:
+                            try:
+                                conn.execute("INSERT OR REPLACE INTO prices(ts, raw) VALUES (?, ?)", (ts, float(raw)))
+                            except Exception:
+                                pass
+                    conn.commit()
+                    cur = conn.execute(
+                        "SELECT ts, raw FROM prices WHERE ts >= ? AND ts < ? ORDER BY ts ASC",
+                        (int(start_dt.timestamp()), int(end_dt.timestamp())),
+                    )
+                    rows_from_db = list(cur)
+            except Exception as db_exc:
+                logger.debug("Price DB write failed: %s", db_exc)
+        # Fallback to provider series if DB not available
+        if not rows_from_db:
+            rows_from_db = [
+                (
+                    int(ts_dt.replace(minute=0, second=0, microsecond=0).timestamp()),
+                    float(raw),
+                )
+                for ts_dt, raw in raw_series
+            ]
 
         def to_buy_sell(raw: float) -> tuple[float, float]:
             buy = (
@@ -534,7 +653,8 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
             return buy, sell
 
         items = []
-        for ts, raw in raw_series:
+        for ts_epoch, raw in rows_from_db:
+            ts = datetime.fromtimestamp(ts_epoch, tz=timezone.utc)
             buy, sell = to_buy_sell(raw)
             items.append(
                 {
@@ -545,7 +665,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                 }
             )
 
-        return {"generated_at": now.isoformat(), "start": start_hour.isoformat(), "items": items}
+        return {"generated_at": now.isoformat(), "start": start_dt.isoformat(), "items": items}
 
     @app.get("/export")
     def export_series() -> dict:
