@@ -24,6 +24,18 @@ class PlanSlot(BaseModel):
         )
     )
     reason: str | None = Field(default=None, description="Brief rationale for this action")
+    # Optional energy flow estimates (kWh for the slot). Positive numbers.
+    solar_to_grid_kwh: float | None = None
+    solar_to_battery_kwh: float | None = None
+    solar_to_usage_kwh: float | None = None
+    battery_to_grid_kwh: float | None = None
+    battery_to_usage_kwh: float | None = None
+    grid_to_usage_kwh: float | None = None
+    grid_to_battery_kwh: float | None = None
+    # Costs for the slot
+    grid_cost_eur: float | None = None
+    grid_savings_eur: float | None = None
+    battery_cost_eur: float | None = None
 
 
 class Plan(BaseModel):

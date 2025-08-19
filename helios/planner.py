@@ -42,15 +42,16 @@ class Planner:
 
             # Provide a brief reason per slot mirroring the decision at midpoint
             reason = self._reason_for(action, setpoint, price_mid, pivot)
-            slots.append(
-                PlanSlot(
-                    start=t,
-                    end=slice_end,
-                    action=action,
-                    target_grid_setpoint_w=setpoint,
-                    reason=reason,
-                )
+            slot = PlanSlot(
+                start=t,
+                end=slice_end,
+                action=action,
+                target_grid_setpoint_w=setpoint,
+                reason=reason,
             )
+            # Derive simple energy flow estimates from setpoint and price for visualizations
+            self._annotate_energy_and_costs(slot, price_mid)
+            slots.append(slot)
             t = slice_end
 
         # Build a brief plan summary
@@ -67,6 +68,63 @@ class Planner:
             slots=slots,
             summary=summary,
         )
+
+    def _annotate_energy_and_costs(self, slot: PlanSlot, raw_price_eur_per_kwh: float) -> None:
+        """Populate PlanSlot with rough energy flow and cost estimates.
+
+        This is not a physical model; it apportions energy solely based on grid
+        setpoint and assumes no curtailment. It is intended for UI graphs only.
+        """
+        secs = int((slot.end - slot.start).total_seconds())
+        kwh = abs(slot.target_grid_setpoint_w) * (secs / 3600.0) / 1000.0
+
+        # Prices adjusted per settings (buy and sell differ)
+        buy = (
+            raw_price_eur_per_kwh * self.settings.buy_price_multiplier
+            + self.settings.buy_price_fixed_fee_eur_per_kwh
+        )
+        sell = (
+            raw_price_eur_per_kwh * self.settings.sell_price_multiplier
+            - self.settings.sell_price_fixed_deduction_eur_per_kwh
+        )
+
+        # Battery round-trip loss and degradation cost
+        eff = max(0.0, min(100.0, self.settings.battery_roundtrip_efficiency_percent)) / 100.0
+        cycle_cost = max(0.0, self.settings.battery_cycle_cost_eur_per_kwh)
+
+        slot.solar_to_grid_kwh = 0.0
+        slot.solar_to_battery_kwh = 0.0
+        slot.solar_to_usage_kwh = 0.0
+        slot.battery_to_grid_kwh = 0.0
+        slot.battery_to_usage_kwh = 0.0
+        slot.grid_to_usage_kwh = 0.0
+        slot.grid_to_battery_kwh = 0.0
+
+        slot.grid_cost_eur = 0.0
+        slot.grid_savings_eur = 0.0
+        slot.battery_cost_eur = 0.0
+
+        if slot.target_grid_setpoint_w > 0:
+            # Import from grid; assume it charges the battery when action is charge
+            if slot.action == Action.CHARGE_FROM_GRID:
+                slot.grid_to_battery_kwh = kwh
+                # battery throughput cost and roundtrip loss priced at buy
+                throughput = kwh
+                loss_kwh = kwh * (1 - eff)
+                slot.battery_cost_eur = throughput * cycle_cost + loss_kwh * buy
+            else:
+                slot.grid_to_usage_kwh = kwh
+            slot.grid_cost_eur = kwh * buy
+        elif slot.target_grid_setpoint_w < 0:
+            # Export to grid; assume energy originates from battery
+            slot.battery_to_grid_kwh = kwh
+            throughput = kwh / max(1e-6, eff)
+            degradation = throughput * cycle_cost
+            slot.battery_cost_eur = degradation
+            slot.grid_savings_eur = kwh * sell
+        else:
+            # Idle: no grid cost/savings; not modeling solar/load here
+            pass
 
     def _decide_action(self, price_mid: float, pivot: float) -> tuple[Action, int]:
         # Simple heuristic:

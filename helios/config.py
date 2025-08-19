@@ -48,6 +48,12 @@ class HeliosSettings(BaseSettings):
     battery_capacity_kwh: Optional[float] = Field(default=None, ge=0)
     battery_charge_limit_w: Optional[int] = Field(default=None, ge=0)
     battery_discharge_limit_w: Optional[int] = Field(default=None, ge=0)
+    battery_roundtrip_efficiency_percent: float = Field(default=90.0, ge=0, le=100)
+    battery_cycle_cost_eur_per_kwh: float = Field(
+        default=0.02,
+        description="Estimated battery degradation cost per kWh throughput",
+        ge=0,
+    )
     min_soc_percent: float = Field(default=10.0, ge=0, le=100)
     max_soc_percent: float = Field(default=95.0, ge=0, le=100)
     reserve_soc_percent: float = Field(default=40.0, ge=0, le=100)
@@ -154,6 +160,8 @@ class ConfigUpdate(BaseModel):
     battery_capacity_kwh: Optional[float] = None
     battery_charge_limit_w: Optional[int] = None
     battery_discharge_limit_w: Optional[int] = None
+    battery_roundtrip_efficiency_percent: Optional[float] = None
+    battery_cycle_cost_eur_per_kwh: Optional[float] = None
     min_soc_percent: Optional[float] = None
     max_soc_percent: Optional[float] = None
     reserve_soc_percent: Optional[float] = None

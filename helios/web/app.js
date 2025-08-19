@@ -438,15 +438,8 @@ function drawEnergyChart(canvas, plan) {
   const ymin = -1; // dynamic below
   const ymax = 1;
 
-  // Build stacked series per slot using target_grid_setpoint_w only (simple view)
-  // Positive kWh bars: battery->grid (light blue), solar->grid (orange), solar->battery (green), solar->usage (yellow)
-  // Negative kWh bars: battery->usage (blue), grid->usage (red), grid->battery (pink)
+  // Build stacked series per slot using annotated energy flows from the plan
   const slotSecs = plan.planning_window_seconds || 900;
-
-  // For now, map action to a single stream to visualize setpoint intent:
-  // - export_to_grid => battery->grid (positive)
-  // - charge_from_grid => grid->battery (negative)
-  // - idle/discharge_to_load not used by this simple planner; show grid->usage when positive import setpoint
   const streams = [
     { key: 'batt_grid', color: '#60a5fa', sign: 1 },
     { key: 'solar_grid', color: '#f59e0b', sign: 1 },
@@ -460,17 +453,15 @@ function drawEnergyChart(canvas, plan) {
   // Compute values (kWh per slot)
   const bars = plan.slots.map(s => {
     const t0 = new Date(s.start).getTime();
-    const w = s.target_grid_setpoint_w; // + import from grid, - export to grid
-    const kwh = Math.abs(w) * (slotSecs / 3600) / 1000;
     const obj = { t: t0 };
     streams.forEach(st => obj[st.key] = 0);
-    if (w > 0) {
-      // import from grid → grid->usage (approx)
-      obj['grid_use'] = kwh;
-    } else if (w < 0) {
-      // export to grid → batt->grid
-      obj['batt_grid'] = kwh;
-    }
+    obj['batt_grid'] = s.battery_to_grid_kwh || 0;
+    obj['solar_grid'] = s.solar_to_grid_kwh || 0;
+    obj['solar_batt'] = s.solar_to_battery_kwh || 0;
+    obj['solar_use'] = s.solar_to_usage_kwh || 0;
+    obj['batt_use'] = s.battery_to_usage_kwh || 0;
+    obj['grid_use'] = s.grid_to_usage_kwh || 0;
+    obj['grid_batt'] = s.grid_to_battery_kwh || 0;
     return obj;
   });
 
@@ -542,15 +533,19 @@ function drawCostsChart(canvas, plan, prices) {
   const slotSecs = plan.planning_window_seconds || 900;
   const bars = plan.slots.map(s => {
     const mid = new Date(s.start).getTime() + (slotSecs*500);
-    const prices = priceAt(mid);
-    const w = s.target_grid_setpoint_w; // + import, - export
-    const kwh = Math.abs(w) * (slotSecs / 3600) / 1000;
-    let gridCost = 0, gridSave = 0, battCost = 0;
-    if (w > 0) gridCost = kwh * prices.buy; // import cost
-    if (w < 0) gridSave = kwh * prices.sell; // export saving
-    // Battery cost not modeled; placeholder small degradation cost per kWh
-    const battThroughput = 0; // set to 0 until modeled
-    battCost = battThroughput * 0.02;
+    const pr = priceAt(mid);
+    // Prefer server-computed costs if present
+    let gridCost = s.grid_cost_eur ?? 0;
+    let gridSave = s.grid_savings_eur ?? 0;
+    let battCost = s.battery_cost_eur ?? 0;
+    if (s.grid_cost_eur == null || s.grid_savings_eur == null || s.battery_cost_eur == null) {
+      // Fallback from energy flows and prices
+      const impKwh = (s.grid_to_usage_kwh || 0) + (s.grid_to_battery_kwh || 0);
+      const expKwh = (s.battery_to_grid_kwh || 0) + (s.solar_to_grid_kwh || 0);
+      gridCost = impKwh * pr.buy;
+      gridSave = expKwh * pr.sell;
+      // no local estimate for battCost when missing
+    }
     return { t: new Date(s.start).getTime(), gridCost, gridSave, battCost };
   });
 
