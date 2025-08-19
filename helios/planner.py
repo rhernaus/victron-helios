@@ -64,6 +64,8 @@ class Planner:
         # Respect battery power limits if provided (planner-level clamp)
         battery_charge_limit = self.settings.battery_charge_limit_w or import_limit
         battery_discharge_limit = self.settings.battery_discharge_limit_w or export_limit
+        # Optional SoC policy: block charge above max SoC, block export below reserve
+        soc = self.settings.assumed_current_soc_percent
 
         # Default idle
         action = Action.IDLE
@@ -87,11 +89,21 @@ class Planner:
             action = Action.CHARGE_FROM_GRID
             # Use configured limit; planner may later incorporate battery
             # charge limit and pricing formulas
-            setpoint = min(import_limit, battery_charge_limit)
+            # If SoC provided and already at/above max, do not charge
+            if soc is not None and soc >= self.settings.max_soc_percent:
+                action = Action.IDLE
+                setpoint = 0
+            else:
+                setpoint = min(import_limit, battery_charge_limit)
         elif self.settings.grid_sell_enabled and expensive and export_limit > 0:
             action = Action.EXPORT_TO_GRID
             # Negative setpoint for export; clamp by grid and battery discharge limit
-            setpoint = -min(export_limit, battery_discharge_limit)
+            # If SoC provided and at/below reserve, do not export
+            if soc is not None and soc <= self.settings.reserve_soc_percent:
+                action = Action.IDLE
+                setpoint = 0
+            else:
+                setpoint = -min(export_limit, battery_discharge_limit)
 
         return action, setpoint
 

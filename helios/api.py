@@ -15,6 +15,8 @@ from .metrics import (
     control_job_runs_total,
     control_ticks_total,
     current_setpoint_watts,
+    executor_misapplies_total,
+    executor_reasserts_total,
     plan_age_seconds,
     planner_runs_total,
     recalc_job_runs_total,
@@ -190,6 +192,26 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
     def pause() -> StatusResponse:
         with state.lock:
             state.automation_paused = True
+            executor = state.executor
+        # Safety: if using D-Bus, reset grid setpoint to 0 on pause
+        try:
+            if isinstance(executor, DbusExecutor):
+                import dbus  # type: ignore
+
+                bus = dbus.SystemBus()
+                proxy = bus.get_object(
+                    "com.victronenergy.settings", "/Settings/CGwacs/AcPowerSetPoint"
+                )
+                try:
+                    iface = dbus.Interface(proxy, dbus_interface="com.victronenergy.BusItem")
+                    iface.SetValue(0)
+                except Exception:
+                    props = dbus.Interface(
+                        proxy, dbus_interface="org.freedesktop.DBus.Properties"
+                    )
+                    props.Set("com.victronenergy.BusItem", "Value", 0)
+        except Exception:  # nosec B112
+            pass
         return status()
 
     @app.post("/resume")

@@ -127,12 +127,13 @@ class TibberPriceProvider(PriceProvider):
     )
     def get_prices(self, start: datetime, end: datetime) -> list[tuple[datetime, float]]:
         # Minimal Tibber GraphQL query for current home prices
-        # Note: In a full implementation, select the correct home and timezone handling.
+        # Include home ids to optionally select a specific home
         query = {
             "query": """
             query {
               viewer {
                  homes {
+                   id
                    currentSubscription {
                      priceInfo {
                        today { total startsAt }

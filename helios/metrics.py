@@ -34,6 +34,14 @@ executor_apply_seconds = Summary(
 executor_apply_failures_total = Counter(
     "helios_executor_apply_failures_total", "Executor apply failures"
 )
+executor_reasserts_total = Counter(
+    "helios_executor_reasserts_total",
+    "Number of times executor reasserted setpoint after mismatch",
+)
+executor_misapplies_total = Counter(
+    "helios_executor_misapplies_total",
+    "Number of times target setpoint did not match after reassert attempts",
+)
 
 # Scheduler metrics
 recalc_job_runs_total = Counter("helios_recalc_job_runs_total", "Number of recalc job executions")
