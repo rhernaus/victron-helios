@@ -206,13 +206,46 @@ class TibberPriceProvider(PriceProvider):
 
 @dataclass
 class StubForecastProvider(ForecastProvider):
+    peak_watts: float = 3500.0
+    base_load_watts: float = 400.0
+
+    def _hours(self, start: datetime, end: datetime) -> list[datetime]:
+        start = start.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        end = end.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        hours = int(max(0, (end - start).total_seconds() // 3600))
+        return [start + timedelta(hours=h) for h in range(hours + 1)]
+
     def get_solar_forecast(self, start: datetime, end: datetime) -> list[tuple[datetime, float]]:
-        # Flat zero for now
-        return []
+        series: list[tuple[datetime, float]] = []
+        for t in self._hours(start, end):
+            # Simple bell curve between 06:00 and 20:00 UTC peaking at 13:00
+            hour = t.hour + t.minute / 60.0
+            if 6 <= hour <= 20:
+                # Normalize to [0,1] with peak around 13
+                x = (hour - 13.0) / 7.0
+                val = max(0.0, 1.0 - x * x)  # inverted parabola
+                watts = val * self.peak_watts
+            else:
+                watts = 0.0
+            series.append((t, round(float(watts), 2)))
+        return series
 
     def get_load_forecast(self, start: datetime, end: datetime) -> list[tuple[datetime, float]]:
-        # Flat zero for now
-        return []
+        series: list[tuple[datetime, float]] = []
+        for t in self._hours(start, end):
+            hour = t.hour + t.minute / 60.0
+            watts = self.base_load_watts
+            # Morning bump 07–09
+            if 7 <= hour <= 9:
+                watts += 300
+            # Midday modest usage
+            if 12 <= hour <= 14:
+                watts += 200
+            # Evening peak 18–22
+            if 18 <= hour <= 22:
+                watts += 600
+            series.append((t, float(watts)))
+        return series
 
 
 @dataclass

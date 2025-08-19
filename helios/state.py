@@ -9,7 +9,7 @@ from .config import HeliosSettings
 from .dwell import DwellController
 from .executor import Executor
 from .models import Plan
-from .providers import PriceProvider
+from .providers import PriceProvider, ForecastProvider
 from .telemetry import TelemetryReader, TelemetrySnapshot, NoOpTelemetryReader
 
 if TYPE_CHECKING:
@@ -24,6 +24,7 @@ class HeliosState:
     planner: Optional[Planner] = None
     executor: Optional[Executor] = None
     price_provider: Optional[PriceProvider] = None
+    forecast_provider: Optional[ForecastProvider] = None
     telemetry_reader: Optional[TelemetryReader] = None
 
     latest_plan: Optional[Plan] = None

@@ -23,7 +23,13 @@ from .metrics import (
 )
 from .models import Action, ConfigResponse, Plan, StatusResponse
 from .planner import Planner
-from .providers import PriceProvider, StubPriceProvider, TibberPriceProvider
+from .providers import (
+    PriceProvider,
+    StubPriceProvider,
+    TibberPriceProvider,
+    ForecastProvider,
+    StubForecastProvider,
+)
 from .scheduler import HeliosScheduler
 from .telemetry import DbusTelemetryReader, NoOpTelemetryReader, TelemetrySnapshot
 from .state import HeliosState, get_state
@@ -51,6 +57,10 @@ def _select_telemetry_reader(settings: HeliosSettings):
         return DbusTelemetryReader()
     return NoOpTelemetryReader()
 
+
+def _select_forecast_provider(settings: HeliosSettings) -> ForecastProvider:
+    # For now only stub is available; keep factory for future providers
+    return StubForecastProvider()
 
 def _recalc_plan(state: HeliosState) -> None:
     # Retrieve price curve using provider abstraction
@@ -91,9 +101,21 @@ def _recalc_plan(state: HeliosState) -> None:
     hourly_prices = provider_to_use.get_prices(
         start_hour, start_hour + timedelta(hours=horizon_hours)
     )
+    # Forecasts (optional)
+    try:
+        forecast = state.forecast_provider or _select_forecast_provider(settings_snapshot)
+    except Exception:
+        forecast = None
+    solar_fc = forecast.get_solar_forecast(start_hour, start_hour + timedelta(hours=horizon_hours)) if forecast else None
+    load_fc = forecast.get_load_forecast(start_hour, start_hour + timedelta(hours=horizon_hours)) if forecast else None
 
     planner: Planner = state.planner  # type: ignore[assignment]
-    plan: Plan = planner.build_plan(price_series=hourly_prices, now=now)
+    plan: Plan = planner.build_plan(
+        price_series=hourly_prices,
+        now=now,
+        solar_forecast=solar_fc,
+        load_forecast=load_fc,
+    )
     with state.lock:
         state.latest_plan = plan
         state.last_recalc_at = now
@@ -185,6 +207,8 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
         state.price_provider = _select_price_provider(state.settings)
     if state.telemetry_reader is None:
         state.telemetry_reader = _select_telemetry_reader(state.settings)
+    if getattr(state, "forecast_provider", None) is None:
+        state.forecast_provider = _select_forecast_provider(state.settings)
 
     def recalc_job():
         recalc_job_runs_total.inc()
