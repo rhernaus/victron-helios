@@ -27,30 +27,43 @@ class HeliosScheduler:
         control_job: Callable[[], None],
     ) -> None:
         settings = self.state.settings
+        recalc_interval = settings.recalculation_interval_seconds
+        # Jitter is at most 10% of interval, capped to 15s and always < interval
+        recalc_jitter = min(
+            max(0, recalc_interval // 10),  # ~10% jitter
+            15,  # absolute cap to avoid large variance on long intervals
+            max(0, recalc_interval - 1),  # ensure jitter < interval
+        )
         self.scheduler.add_job(
             recalc_job,
             IntervalTrigger(
-                seconds=settings.recalculation_interval_seconds,
-                # Allow up to 10% jitter (at least 1s) to avoid thundering herd
-                jitter=max(1, settings.recalculation_interval_seconds // 10),
+                seconds=recalc_interval,
+                jitter=recalc_jitter,
             ),
             id="recalc",
             replace_existing=True,
             coalesce=True,
             max_instances=1,
-            misfire_grace_time=max(1, settings.recalculation_interval_seconds),
+            misfire_grace_time=max(1, recalc_interval),
+        )
+        control_interval = settings.dbus_update_interval_seconds
+        # Jitter is at most 10% of interval, capped to 2s and always < interval
+        control_jitter = min(
+            max(0, control_interval // 10),
+            2,
+            max(0, control_interval - 1),
         )
         self.scheduler.add_job(
             control_job,
             IntervalTrigger(
-                seconds=settings.dbus_update_interval_seconds,
-                jitter=max(1, settings.dbus_update_interval_seconds // 10),
+                seconds=control_interval,
+                jitter=control_jitter,
             ),
             id="control",
             replace_existing=True,
             coalesce=True,
             max_instances=1,
-            misfire_grace_time=max(1, settings.dbus_update_interval_seconds),
+            misfire_grace_time=max(1, control_interval),
         )
 
     def reschedule(self, recalc_job: Callable[[], None], control_job: Callable[[], None]) -> None:
