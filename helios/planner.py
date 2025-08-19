@@ -58,7 +58,8 @@ class Planner:
         num_export = sum(1 for s in slots if s.action == Action.EXPORT_TO_GRID)
         num_idle = sum(1 for s in slots if s.action == Action.IDLE)
         summary = (
-            f"Plan horizon {horizon_hours}h; charge slots={num_charge}, export slots={num_export}, idle slots={num_idle}; pivot={pivot:.3f}"
+            f"H{horizon_hours}h: charge={num_charge}, export={num_export}, "
+            f"idle={num_idle}; pivot={pivot:.3f}"
         )
         return Plan(
             generated_at=generated_at,
@@ -110,9 +111,7 @@ class Planner:
                 setpoint = 0
             else:
                 setpoint = min(import_limit, battery_charge_limit)
-                reason = (
-                    f"cheap price {buy_price:.3f} < pivot-hyst {(pivot - hysteresis):.3f}; charge up to {setpoint}W"
-                )
+                # Keep a compact explanatory string under lint limits (not used here)
         elif self.settings.grid_sell_enabled and expensive and export_limit > 0:
             action = Action.EXPORT_TO_GRID
             # Negative setpoint for export; clamp by grid and battery discharge limit
@@ -122,11 +121,9 @@ class Planner:
                 setpoint = 0
             else:
                 setpoint = -min(export_limit, battery_discharge_limit)
-                reason = (
-                    f"expensive price {sell_price:.3f} > pivot+hyst {(pivot + hysteresis):.3f}; export down to {abs(setpoint)}W"
-                )
         else:
-            reason = "within hysteresis or limits; idle"
+            # No need to keep reason here; caller derives a message
+            pass
 
         return action, setpoint
 
@@ -142,10 +139,16 @@ class Planner:
             - self.settings.sell_price_fixed_deduction_eur_per_kwh
         )
         if action == Action.CHARGE_FROM_GRID:
-            return f"cheap {buy_price:.3f} <= pivot-hyst {(pivot - hysteresis):.3f}; setpoint {setpoint}W"
+            return (
+                f"cheap {buy_price:.3f} <= pivot-hyst {(pivot - hysteresis):.3f}; "
+                f"setpoint {setpoint}W"
+            )
         if action == Action.EXPORT_TO_GRID:
-            return f"expensive {sell_price:.3f} >= pivot+hyst {(pivot + hysteresis):.3f}; setpoint {setpoint}W"
-        return "idle due to mid price within hysteresis or constraints"
+            return (
+                f"expensive {sell_price:.3f} >= pivot+hyst {(pivot + hysteresis):.3f}; "
+                f"setpoint {setpoint}W"
+            )
+        return "idle: price within hysteresis or constrained"
 
     @staticmethod
     def _price_at(series: list[tuple[datetime, float]], at: datetime) -> Optional[float]:
