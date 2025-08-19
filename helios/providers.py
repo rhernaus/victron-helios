@@ -31,6 +31,67 @@ class ForecastProvider(ABC):
         """Return (timestamp, expected_watts) for household load forecast."""
 
 
+@dataclass
+class OpenWeatherForecastProvider(ForecastProvider):
+    api_key: str
+    lat: float
+    lon: float
+    pv_peak_watts: float = 4000.0
+
+    def _hours(self, start: datetime, end: datetime) -> list[datetime]:
+        start = start.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        end = end.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        hours = int(max(0, (end - start).total_seconds() // 3600))
+        return [start + timedelta(hours=h) for h in range(hours + 1)]
+
+    def _owm_hourly(self) -> list[dict]:
+        # One Call API 3.0: include hourly forecast for next 48h
+        url = f"https://api.openweathermap.org/data/3.0/onecall?lat={self.lat}&lon={self.lon}&appid={self.api_key}&units=metric&exclude=minutely,current,daily,alerts"
+        with httpx.Client(timeout=10) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+        return data.get("hourly", [])
+
+    def _estimate_pv_from_clouds(self, cloud_percent: float) -> float:
+        # Simple mapping: clear sky ~ 1.0, fully overcast ~ 0.15 of peak
+        cloud = max(0.0, min(100.0, float(cloud_percent))) / 100.0
+        factor = max(0.15, 1.0 - 0.85 * cloud)
+        return self.pv_peak_watts * factor
+
+    def get_solar_forecast(self, start: datetime, end: datetime) -> list[tuple[datetime, float]]:
+        try:
+            hourly = self._owm_hourly()
+        except Exception:
+            return []
+        series: list[tuple[datetime, float]] = []
+        for item in hourly:
+            ts = item.get("dt")
+            # One Call hourly has clouds as integer percent at top level
+            clouds = item.get("clouds")
+            if ts is None or clouds is None:
+                continue
+            t = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+            if not (start <= t < end):
+                continue
+            # Clamp night-time production to 0 using a basic day window
+            hour = t.hour
+            pv = 0.0
+            if 6 <= hour <= 20:
+                pv = self._estimate_pv_from_clouds(float(clouds))
+                # shape with a mild midday bump
+                x = (hour - 13.0) / 7.0
+                pv *= max(0.0, 1.0 - 0.3 * x * x)
+            series.append((t, round(float(pv), 2)))
+        # Ensure at least a point at start/end if holes
+        return series
+
+    def get_load_forecast(self, start: datetime, end: datetime) -> list[tuple[datetime, float]]:
+        # No external source yet; use a shaped baseline similar to stub
+        baseline = StubForecastProvider(base_load_watts=400.0)
+        return baseline.get_load_forecast(start, end)
+
+
 class EVProvider(ABC):
     @abstractmethod
     def get_status(self) -> dict:
@@ -206,13 +267,46 @@ class TibberPriceProvider(PriceProvider):
 
 @dataclass
 class StubForecastProvider(ForecastProvider):
+    peak_watts: float = 3500.0
+    base_load_watts: float = 400.0
+
+    def _hours(self, start: datetime, end: datetime) -> list[datetime]:
+        start = start.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        end = end.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        hours = int(max(0, (end - start).total_seconds() // 3600))
+        return [start + timedelta(hours=h) for h in range(hours + 1)]
+
     def get_solar_forecast(self, start: datetime, end: datetime) -> list[tuple[datetime, float]]:
-        # Flat zero for now
-        return []
+        series: list[tuple[datetime, float]] = []
+        for t in self._hours(start, end):
+            # Simple bell curve between 06:00 and 20:00 UTC peaking at 13:00
+            hour = t.hour + t.minute / 60.0
+            if 6 <= hour <= 20:
+                # Normalize to [0,1] with peak around 13
+                x = (hour - 13.0) / 7.0
+                val = max(0.0, 1.0 - x * x)  # inverted parabola
+                watts = val * self.peak_watts
+            else:
+                watts = 0.0
+            series.append((t, round(float(watts), 2)))
+        return series
 
     def get_load_forecast(self, start: datetime, end: datetime) -> list[tuple[datetime, float]]:
-        # Flat zero for now
-        return []
+        series: list[tuple[datetime, float]] = []
+        for t in self._hours(start, end):
+            hour = t.hour + t.minute / 60.0
+            watts = self.base_load_watts
+            # Morning bump 07–09
+            if 7 <= hour <= 9:
+                watts += 300
+            # Midday modest usage
+            if 12 <= hour <= 14:
+                watts += 200
+            # Evening peak 18–22
+            if 18 <= hour <= 22:
+                watts += 600
+            series.append((t, float(watts)))
+        return series
 
 
 @dataclass

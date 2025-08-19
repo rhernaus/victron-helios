@@ -9,8 +9,14 @@ from .config import HeliosSettings
 from .dwell import DwellController
 from .executor import Executor
 from .models import Plan
-from .providers import PriceProvider
+from .providers import PriceProvider, ForecastProvider
 from .telemetry import TelemetryReader, TelemetrySnapshot, NoOpTelemetryReader
+
+try:
+    # Optional: lightweight SQL storage for telemetry/history in future
+    import sqlite3  # type: ignore
+except Exception:  # pragma: no cover - optional
+    sqlite3 = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from .planner import Planner
@@ -24,6 +30,7 @@ class HeliosState:
     planner: Optional[Planner] = None
     executor: Optional[Executor] = None
     price_provider: Optional[PriceProvider] = None
+    forecast_provider: Optional[ForecastProvider] = None
     telemetry_reader: Optional[TelemetryReader] = None
 
     latest_plan: Optional[Plan] = None

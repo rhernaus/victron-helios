@@ -23,10 +23,23 @@ from .metrics import (
 )
 from .models import Action, ConfigResponse, Plan, StatusResponse
 from .planner import Planner
-from .providers import PriceProvider, StubPriceProvider, TibberPriceProvider
+from .providers import (
+    PriceProvider,
+    StubPriceProvider,
+    TibberPriceProvider,
+    ForecastProvider,
+    StubForecastProvider,
+    OpenWeatherForecastProvider,
+)
 from .scheduler import HeliosScheduler
 from .telemetry import DbusTelemetryReader, NoOpTelemetryReader, TelemetrySnapshot
 from .state import HeliosState, get_state
+
+try:  # optional dependency for local telemetry storage
+    import sqlite3  # type: ignore
+except Exception:  # pragma: no cover - optional
+    sqlite3 = None  # type: ignore[assignment]
+from contextlib import closing
 
 logger = logging.getLogger("helios")
 
@@ -50,6 +63,23 @@ def _select_telemetry_reader(settings: HeliosSettings):
     if getattr(settings, "telemetry_backend", "noop") == "dbus":
         return DbusTelemetryReader()
     return NoOpTelemetryReader()
+
+
+def _select_forecast_provider(settings: HeliosSettings) -> ForecastProvider:
+    # Use OpenWeather if API key and location are configured; otherwise stub
+    use_ow = (
+        settings.openweather_api_key
+        and settings.location_lat is not None
+        and settings.location_lon is not None
+    )
+    if use_ow:
+        return OpenWeatherForecastProvider(
+            api_key=str(settings.openweather_api_key),
+            lat=float(settings.location_lat or 0.0),
+            lon=float(settings.location_lon or 0.0),
+            pv_peak_watts=float(settings.pv_peak_watts or 4000.0),
+        )
+    return StubForecastProvider(peak_watts=float(settings.pv_peak_watts or 4000.0))
 
 
 def _recalc_plan(state: HeliosState) -> None:
@@ -91,9 +121,29 @@ def _recalc_plan(state: HeliosState) -> None:
     hourly_prices = provider_to_use.get_prices(
         start_hour, start_hour + timedelta(hours=horizon_hours)
     )
+    # Forecasts (optional)
+    try:
+        forecast = state.forecast_provider or _select_forecast_provider(settings_snapshot)
+    except Exception:
+        forecast = None
+    solar_fc = (
+        forecast.get_solar_forecast(start_hour, start_hour + timedelta(hours=horizon_hours))
+        if forecast
+        else None
+    )
+    load_fc = (
+        forecast.get_load_forecast(start_hour, start_hour + timedelta(hours=horizon_hours))
+        if forecast
+        else None
+    )
 
     planner: Planner = state.planner  # type: ignore[assignment]
-    plan: Plan = planner.build_plan(price_series=hourly_prices, now=now)
+    plan: Plan = planner.build_plan(
+        price_series=hourly_prices,
+        now=now,
+        solar_forecast=solar_fc,
+        load_forecast=load_fc,
+    )
     with state.lock:
         state.latest_plan = plan
         state.last_recalc_at = now
@@ -185,6 +235,8 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
         state.price_provider = _select_price_provider(state.settings)
     if state.telemetry_reader is None:
         state.telemetry_reader = _select_telemetry_reader(state.settings)
+    if getattr(state, "forecast_provider", None) is None:
+        state.forecast_provider = _select_forecast_provider(state.settings)
 
     def recalc_job():
         recalc_job_runs_total.inc()
@@ -200,6 +252,32 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
             snap = reader.read()
             with state.lock:
                 state.last_telemetry = snap
+            # Persist a rolling sample if DB available and data_dir writable
+            if sqlite3 is not None:
+                try:
+                    db_path = Path(state.settings.data_dir) / "telemetry.db"
+                    db_path.parent.mkdir(parents=True, exist_ok=True)
+                    with closing(sqlite3.connect(str(db_path))) as conn:  # type: ignore[union-attr]
+                        conn.execute(
+                            "CREATE TABLE IF NOT EXISTS telemetry ("
+                            "ts INTEGER PRIMARY KEY, "
+                            "soc REAL, load INTEGER, solar INTEGER)"
+                        )
+                        conn.execute(
+                            (
+                                "INSERT OR REPLACE INTO telemetry("
+                                "ts, soc, load, solar) VALUES (?, ?, ?, ?)"
+                            ),
+                            (
+                                int(datetime.now(timezone.utc).timestamp()),
+                                snap.soc_percent if snap.soc_percent is not None else None,
+                                snap.load_w if snap.load_w is not None else None,
+                                snap.solar_w if snap.solar_w is not None else None,
+                            ),
+                        )
+                        conn.commit()
+                except Exception as db_exc:
+                    logger.debug("Telemetry DB write failed: %s", db_exc)
         except Exception as exc:
             # Keep last snapshot but record the failure for diagnostics
             logger.debug("Telemetry read failed: %s", exc)
@@ -281,6 +359,36 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
         data = generate_latest()
         # Return a raw Response with the correct content type
         return Response(content=data, media_type=CONTENT_TYPE_LATEST)
+
+    @app.get("/telemetry/history")
+    def telemetry_history(limit: int = 500) -> dict:
+        """Return recent telemetry rows from the local SQLite store.
+
+        This is a simple built-in time-series store to bootstrap forecasting.
+        """
+        try:
+            db_path = Path(state.settings.data_dir) / "telemetry.db"
+            with closing(sqlite3.connect(str(db_path))) as conn:
+                rows = list(
+                    conn.execute(
+                        "SELECT ts, soc, load, solar FROM telemetry ORDER BY ts DESC LIMIT ?",
+                        (int(max(1, min(10000, limit))),),
+                    )
+                )
+        except Exception:
+            rows = []
+        rows.reverse()
+        items = []
+        for r in rows:
+            items.append(
+                {
+                    "t": datetime.fromtimestamp(r[0], tz=timezone.utc).isoformat(),
+                    "soc": r[1],
+                    "load": r[2],
+                    "solar": r[3],
+                }
+            )
+        return {"items": items}
 
     @app.get("/config", response_model=ConfigResponse)
     def get_config() -> ConfigResponse:
@@ -390,6 +498,108 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                 (datetime.now(timezone.utc) - state.latest_plan.generated_at).total_seconds()
             )
             return state.latest_plan.model_dump()
+
+    @app.get("/prices")
+    def get_prices() -> dict:  # pragma: no cover - exercised via UI, not tests
+        """Return the current planning horizon price series and derived buy/sell prices.
+
+        The response schema is intentionally simple for the web UI and not versioned.
+        """
+        # Snapshot settings and provider without holding the lock across network calls
+        with state.lock:
+            settings_snapshot = state.settings
+            provider_to_use: PriceProvider | None = state.price_provider
+        if provider_to_use is None:
+            provider_to_use = _select_price_provider(settings_snapshot)
+            with state.lock:
+                state.price_provider = provider_to_use
+
+        now = datetime.now(timezone.utc)
+        start_hour = now.replace(minute=0, second=0, microsecond=0)
+        horizon_hours = settings_snapshot.planning_horizon_hours
+
+        raw_series = provider_to_use.get_prices(
+            start_hour, start_hour + timedelta(hours=horizon_hours)
+        )
+
+        def to_buy_sell(raw: float) -> tuple[float, float]:
+            buy = (
+                raw * settings_snapshot.buy_price_multiplier
+                + settings_snapshot.buy_price_fixed_fee_eur_per_kwh
+            )
+            sell = (
+                raw * settings_snapshot.sell_price_multiplier
+                - settings_snapshot.sell_price_fixed_deduction_eur_per_kwh
+            )
+            return buy, sell
+
+        items = []
+        for ts, raw in raw_series:
+            buy, sell = to_buy_sell(raw)
+            items.append(
+                {
+                    "t": ts.isoformat(),
+                    "raw": round(float(raw), 6),
+                    "buy": round(float(buy), 6),
+                    "sell": round(float(sell), 6),
+                }
+            )
+
+        return {"generated_at": now.isoformat(), "start": start_hour.isoformat(), "items": items}
+
+    @app.get("/export")
+    def export_series() -> dict:
+        """Export prices, flows and costs for the current plan window.
+
+        Returns a compact JSON with aligned time slots for downstream analysis.
+        """
+        with state.lock:
+            plan = state.latest_plan
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Plan not ready")
+
+        # prices for window
+        try:
+            settings_snapshot = state.settings
+            provider = state.price_provider or _select_price_provider(settings_snapshot)
+            start = plan.slots[0].start if plan.slots else plan.generated_at
+            end = plan.slots[-1].end if plan.slots else plan.generated_at
+            price_series = provider.get_prices(start, end)
+        except Exception:
+            price_series = []
+
+        slot_items = []
+        for s in plan.slots:
+            slot_items.append(
+                {
+                    "start": s.start.isoformat(),
+                    "end": s.end.isoformat(),
+                    "action": s.action,
+                    "setpoint_w": s.target_grid_setpoint_w,
+                    "flows": {
+                        "solar_to_grid_kwh": s.solar_to_grid_kwh,
+                        "solar_to_battery_kwh": s.solar_to_battery_kwh,
+                        "solar_to_usage_kwh": s.solar_to_usage_kwh,
+                        "battery_to_grid_kwh": s.battery_to_grid_kwh,
+                        "battery_to_usage_kwh": s.battery_to_usage_kwh,
+                        "grid_to_usage_kwh": s.grid_to_usage_kwh,
+                        "grid_to_battery_kwh": s.grid_to_battery_kwh,
+                    },
+                    "costs": {
+                        "grid_cost_eur": s.grid_cost_eur,
+                        "grid_savings_eur": s.grid_savings_eur,
+                        "battery_cost_eur": s.battery_cost_eur,
+                    },
+                }
+            )
+
+        prices = [{"t": t.isoformat(), "raw": p} for (t, p) in price_series]
+
+        return {
+            "plan_generated_at": plan.generated_at.isoformat(),
+            "slots": slot_items,
+            "prices": prices,
+        }
 
     # --- Web UI mounting ---
     try:

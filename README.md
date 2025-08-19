@@ -22,6 +22,9 @@ Current endpoints:
 - `POST /pause`: pause automation
 - `POST /resume`: resume automation
 - `GET /metrics`: Prometheus metrics
+- `GET /prices`: current planning horizon prices (derived buy/sell)
+- `GET /export`: export current plan window with per-slot flows and costs
+- `GET /telemetry/history?limit=N`: recent telemetry samples from local store
 
 ### Configuration
 
@@ -34,6 +37,9 @@ Current endpoints:
   - `HELIOS_PRICE_PROVIDER`: `stub` (default) or `tibber`.
   - For Tibber: set `HELIOS_TIBBER_TOKEN` and optionally `HELIOS_TIBBER_HOME_ID`. The
     provider performs lightweight caching, retries, and will be rate-limited.
+  - Forecasts:
+    - To use OpenWeather One Call 3.0 for solar forecasting, set `HELIOS_OPENWEATHER_API_KEY` plus `HELIOS_LOCATION_LAT` and `HELIOS_LOCATION_LON`.
+    - Configure PV size with `HELIOS_PV_PEAK_WATTS` (defaults to 4000).
 - Executor backend: `HELIOS_EXECUTOR_BACKEND` = `noop` (default) or `dbus` (stub implementation in progress).
 - Dwell/hysteresis:
   - `HELIOS_MINIMUM_ACTION_DWELL_SECONDS`: minimum time before switching actions.
@@ -113,7 +119,16 @@ uvicorn main:app --host 127.0.0.1 --port 8080 &
 - If you bind Uvicorn to all interfaces, you can browse: `http://<CERBO_IP>:8080/ui/`.
 - The UI provides:
   - Status and health
-  - Plan viewer with auto-refresh
+  - Plan viewer with auto-refresh and three charts:
+    - Energy prices (buy/sell) with time axis
+    - Energy management (stacked flows: solar/battery/grid) with predicted vs realized styling
+    - Costs and savings (grid costs/savings and battery cost)
+  - Hover tooltips show exact values on all charts
   - Configuration editor (quick fields and full key/value)
   - Pause/Resume controls
   - Metrics viewer and link to raw `/metrics`
+
+### Telemetry storage for forecasting
+
+- Helios persists lightweight telemetry samples to a local SQLite DB at `/data/helios/telemetry.db`.
+- You can retrieve recent rows via `GET /telemetry/history` and use them to train a personalized forecaster.

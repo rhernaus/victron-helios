@@ -13,16 +13,16 @@ class TelemetrySnapshot:
 
 
 class TelemetryReader:
-    def read(self) -> TelemetrySnapshot:
+    def read(self) -> TelemetrySnapshot:  # pragma: no cover - interface
         raise NotImplementedError
 
 
 class NoOpTelemetryReader(TelemetryReader):
-    def read(self) -> TelemetrySnapshot:
+    def read(self) -> TelemetrySnapshot:  # pragma: no cover - trivial
         return TelemetrySnapshot()
 
 
-class DbusTelemetryReader(TelemetryReader):
+class DbusTelemetryReader(TelemetryReader):  # pragma: no cover - hardware specific
     """Best-effort D-Bus ingestion for Victron devices.
 
     Reads a small set of aggregated values if available, falling back gracefully
