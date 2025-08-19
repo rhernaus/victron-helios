@@ -17,9 +17,7 @@ class HeliosScheduler:
 
     def start(self, recalc_job: Callable[[], None], control_job: Callable[[], None]) -> None:
         # Listen for misfires to expose as metrics
-        self.scheduler.add_listener(
-            lambda event: scheduler_misfires_total.inc(), EVENT_JOB_MISSED
-        )
+        self.scheduler.add_listener(lambda event: scheduler_misfires_total.inc(), EVENT_JOB_MISSED)
         self.scheduler.start()
         self._schedule_jobs(recalc_job, control_job)
 

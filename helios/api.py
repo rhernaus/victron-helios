@@ -15,8 +15,6 @@ from .metrics import (
     control_job_runs_total,
     control_ticks_total,
     current_setpoint_watts,
-    executor_misapplies_total,
-    executor_reasserts_total,
     plan_age_seconds,
     planner_runs_total,
     recalc_job_runs_total,
@@ -115,7 +113,7 @@ def _do_control(state: HeliosState) -> None:
     control_ticks_total.inc()
 
 
-def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
+def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  # noqa: C901
     app = FastAPI(default_response_class=JSONResponse)
 
     state = get_state()
@@ -140,18 +138,26 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
     state.dwell.minimum_dwell_seconds = state.settings.minimum_action_dwell_seconds
     # Configure per-action dwell mapping
     state.dwell.per_action_dwell_seconds = {
-        Action.CHARGE_FROM_GRID: state.settings.dwell_seconds_charge_from_grid
-        if state.settings.dwell_seconds_charge_from_grid is not None
-        else state.settings.minimum_action_dwell_seconds,
-        Action.DISCHARGE_TO_LOAD: state.settings.dwell_seconds_discharge_to_load
-        if state.settings.dwell_seconds_discharge_to_load is not None
-        else state.settings.minimum_action_dwell_seconds,
-        Action.EXPORT_TO_GRID: state.settings.dwell_seconds_export_to_grid
-        if state.settings.dwell_seconds_export_to_grid is not None
-        else state.settings.minimum_action_dwell_seconds,
-        Action.IDLE: state.settings.dwell_seconds_idle
-        if state.settings.dwell_seconds_idle is not None
-        else state.settings.minimum_action_dwell_seconds,
+        Action.CHARGE_FROM_GRID: (
+            state.settings.dwell_seconds_charge_from_grid
+            if state.settings.dwell_seconds_charge_from_grid is not None
+            else state.settings.minimum_action_dwell_seconds
+        ),
+        Action.DISCHARGE_TO_LOAD: (
+            state.settings.dwell_seconds_discharge_to_load
+            if state.settings.dwell_seconds_discharge_to_load is not None
+            else state.settings.minimum_action_dwell_seconds
+        ),
+        Action.EXPORT_TO_GRID: (
+            state.settings.dwell_seconds_export_to_grid
+            if state.settings.dwell_seconds_export_to_grid is not None
+            else state.settings.minimum_action_dwell_seconds
+        ),
+        Action.IDLE: (
+            state.settings.dwell_seconds_idle
+            if state.settings.dwell_seconds_idle is not None
+            else state.settings.minimum_action_dwell_seconds
+        ),
     }
     if state.executor is None:
         state.executor = _select_executor(state.settings, dwell=state.dwell)
@@ -192,9 +198,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
                     iface = dbus.Interface(proxy, dbus_interface="com.victronenergy.BusItem")
                     iface.SetValue(0)
                 except Exception:
-                    props = dbus.Interface(
-                        proxy, dbus_interface="org.freedesktop.DBus.Properties"
-                    )
+                    props = dbus.Interface(proxy, dbus_interface="org.freedesktop.DBus.Properties")
                     props.Set("com.victronenergy.BusItem", "Value", 0)
         except Exception:  # nosec B112
             pass
@@ -221,9 +225,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
                     iface = dbus.Interface(proxy, dbus_interface="com.victronenergy.BusItem")
                     iface.SetValue(0)
                 except Exception:
-                    props = dbus.Interface(
-                        proxy, dbus_interface="org.freedesktop.DBus.Properties"
-                    )
+                    props = dbus.Interface(proxy, dbus_interface="org.freedesktop.DBus.Properties")
                     props.Set("com.victronenergy.BusItem", "Value", 0)
         except Exception:  # nosec B112
             pass
@@ -256,18 +258,26 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
                 # update dwell controller with new minimum dwell and per-action dwell
                 state.dwell.minimum_dwell_seconds = new_settings.minimum_action_dwell_seconds
                 state.dwell.per_action_dwell_seconds = {
-                    Action.CHARGE_FROM_GRID: new_settings.dwell_seconds_charge_from_grid
-                    if new_settings.dwell_seconds_charge_from_grid is not None
-                    else new_settings.minimum_action_dwell_seconds,
-                    Action.DISCHARGE_TO_LOAD: new_settings.dwell_seconds_discharge_to_load
-                    if new_settings.dwell_seconds_discharge_to_load is not None
-                    else new_settings.minimum_action_dwell_seconds,
-                    Action.EXPORT_TO_GRID: new_settings.dwell_seconds_export_to_grid
-                    if new_settings.dwell_seconds_export_to_grid is not None
-                    else new_settings.minimum_action_dwell_seconds,
-                    Action.IDLE: new_settings.dwell_seconds_idle
-                    if new_settings.dwell_seconds_idle is not None
-                    else new_settings.minimum_action_dwell_seconds,
+                    Action.CHARGE_FROM_GRID: (
+                        new_settings.dwell_seconds_charge_from_grid
+                        if new_settings.dwell_seconds_charge_from_grid is not None
+                        else new_settings.minimum_action_dwell_seconds
+                    ),
+                    Action.DISCHARGE_TO_LOAD: (
+                        new_settings.dwell_seconds_discharge_to_load
+                        if new_settings.dwell_seconds_discharge_to_load is not None
+                        else new_settings.minimum_action_dwell_seconds
+                    ),
+                    Action.EXPORT_TO_GRID: (
+                        new_settings.dwell_seconds_export_to_grid
+                        if new_settings.dwell_seconds_export_to_grid is not None
+                        else new_settings.minimum_action_dwell_seconds
+                    ),
+                    Action.IDLE: (
+                        new_settings.dwell_seconds_idle
+                        if new_settings.dwell_seconds_idle is not None
+                        else new_settings.minimum_action_dwell_seconds
+                    ),
                 }
                 # swap executor if backend changed
                 state.executor = _select_executor(new_settings, dwell=state.dwell)

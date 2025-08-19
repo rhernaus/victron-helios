@@ -51,7 +51,7 @@ class DbusExecutor(Executor):
     settings: HeliosSettings | None = None
     _last_setpoint_w: int | None = None
 
-    def apply_setpoint(self, when: datetime, plan: Plan) -> None:
+    def apply_setpoint(self, when: datetime, plan: Plan) -> None:  # noqa: C901
         slot = plan.slot_for(when)
         if slot is None:
             return
@@ -82,15 +82,18 @@ class DbusExecutor(Executor):
                         max_delta = max(0, ramp) * interval
                         delta = target - self._last_setpoint_w
                         if abs(delta) > max_delta:
-                            target = self._last_setpoint_w + (max_delta if delta > 0 else -max_delta)
+                            step = max_delta if delta > 0 else -max_delta
+                            target = self._last_setpoint_w + step
                 try:
                     import dbus  # type: ignore
 
                     # Connect to SystemBus with basic retry to handle transient bus issues
                     _bus_attempts = 0
-                    _bus: any = None
-                    _proxy: any = None
-                    _max_bus_attempts = 1 + (self.settings.dbus_write_retries if self.settings else 0)
+                    _bus: object | None = None
+                    _proxy: object | None = None
+                    _max_bus_attempts = 1 + (
+                        self.settings.dbus_write_retries if self.settings else 0
+                    )
                     while _bus_attempts < _max_bus_attempts:
                         try:
                             _bus = dbus.SystemBus()
@@ -145,7 +148,9 @@ class DbusExecutor(Executor):
                     delay_seconds = 0.0
                     if self.settings is not None:
                         max_attempts = max(0, int(self.settings.dbus_reassert_attempts))
-                        delay_seconds = max(0.0, float(self.settings.dbus_write_retry_delay_seconds))
+                        delay_seconds = max(
+                            0.0, float(self.settings.dbus_write_retry_delay_seconds)
+                        )
                     # Try to read back the value and re-assert if mismatch
                     while attempts < max_attempts:
                         attempts += 1
@@ -205,9 +210,7 @@ class DbusExecutor(Executor):
                     iface = dbus.Interface(proxy, dbus_interface="com.victronenergy.BusItem")
                     iface.SetValue(0)
                 except Exception:
-                    props = dbus.Interface(
-                        proxy, dbus_interface="org.freedesktop.DBus.Properties"
-                    )
+                    props = dbus.Interface(proxy, dbus_interface="org.freedesktop.DBus.Properties")
                     props.Set("com.victronenergy.BusItem", "Value", 0)
             except Exception:  # nosec B112
                 pass

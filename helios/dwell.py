@@ -19,7 +19,10 @@ class DwellController:
             return True
         # Determine dwell requirement for the previous action
         required = self.minimum_dwell_seconds
-        if self.per_action_dwell_seconds is not None and self.last_action in self.per_action_dwell_seconds:
+        if (
+            self.per_action_dwell_seconds is not None
+            and self.last_action in self.per_action_dwell_seconds
+        ):
             required = max(0, int(self.per_action_dwell_seconds[self.last_action]))
         if required <= 0:
             return True
