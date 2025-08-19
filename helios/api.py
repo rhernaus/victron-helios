@@ -200,8 +200,8 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                 except Exception:
                     props = dbus.Interface(proxy, dbus_interface="org.freedesktop.DBus.Properties")
                     props.Set("com.victronenergy.BusItem", "Value", 0)
-        except Exception:  # nosec B112
-            pass
+        except Exception as exc:  # nosec B112
+            logger.warning("Failed to reset grid setpoint on shutdown: %s", exc)
 
     @app.get("/health")
     def health() -> dict:
@@ -227,8 +227,8 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                 except Exception:
                     props = dbus.Interface(proxy, dbus_interface="org.freedesktop.DBus.Properties")
                     props.Set("com.victronenergy.BusItem", "Value", 0)
-        except Exception:  # nosec B112
-            pass
+        except Exception as exc:  # nosec B112
+            logger.warning("Failed to reset grid setpoint on pause: %s", exc)
         return status()
 
     @app.post("/resume")
