@@ -123,6 +123,9 @@ class Planner:
         solar_kwh = (max(0.0, solar_w or 0.0) * secs / 3600.0) / 1000.0
         load_kwh = (max(0.0, load_w or 0.0) * secs / 3600.0) / 1000.0
         # Start with net grid intent derived from setpoint
+        # Approximate battery SoC boundary effects by enforcing charge/discharge
+        # caps via settings limits and ignoring negative SoC. Planner already
+        # clamps setpoints; here we only shape flow attribution.
         if slot.target_grid_setpoint_w > 0:
             # Import from grid; assume it charges the battery when action is charge
             if slot.action == Action.CHARGE_FROM_GRID:
@@ -137,7 +140,7 @@ class Planner:
                 slot.solar_to_usage_kwh = from_solar
                 remaining_load = max(0.0, load_kwh - from_solar)
                 # Remaining load met by grid
-                slot.grid_to_usage_kwh = min(kwh, remaining_load) or kwh
+                slot.grid_to_usage_kwh = min(kwh, remaining_load) if remaining_load > 0 else 0.0
             slot.grid_cost_eur = kwh * buy
         elif slot.target_grid_setpoint_w < 0:
             # Export to grid; assume energy originates from battery
@@ -153,7 +156,11 @@ class Planner:
             slot.grid_savings_eur = kwh * sell
         else:
             # Idle: no grid cost/savings; not modeling solar/load here
-            pass
+            # Route solar to load, remainder to battery (if any)
+            from_solar = min(load_kwh, solar_kwh)
+            slot.solar_to_usage_kwh = from_solar
+            remainder = max(0.0, solar_kwh - from_solar)
+            slot.solar_to_battery_kwh = remainder
 
     @staticmethod
     def _value_at(series: Optional[list[tuple[datetime, float]]], at: datetime) -> Optional[float]:

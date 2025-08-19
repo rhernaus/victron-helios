@@ -66,6 +66,7 @@ class HeliosSettings(BaseSettings):
     tibber_token: Optional[str] = None
     tibber_home_id: Optional[str] = None
     openweather_api_key: Optional[str] = None
+    pv_peak_watts: Optional[float] = Field(default=4000.0, ge=0)
 
     # Execution (write)
     executor_backend: str = Field(default="noop")  # options: noop, dbus

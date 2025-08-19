@@ -29,6 +29,7 @@ from .providers import (
     TibberPriceProvider,
     ForecastProvider,
     StubForecastProvider,
+    OpenWeatherForecastProvider,
 )
 from .scheduler import HeliosScheduler
 from .telemetry import DbusTelemetryReader, NoOpTelemetryReader, TelemetrySnapshot
@@ -59,8 +60,15 @@ def _select_telemetry_reader(settings: HeliosSettings):
 
 
 def _select_forecast_provider(settings: HeliosSettings) -> ForecastProvider:
-    # For now only stub is available; keep factory for future providers
-    return StubForecastProvider()
+    # Use OpenWeather if API key and location are configured; otherwise stub
+    if settings.openweather_api_key and settings.location_lat is not None and settings.location_lon is not None:
+        return OpenWeatherForecastProvider(
+            api_key=settings.openweather_api_key,
+            lat=float(settings.location_lat),
+            lon=float(settings.location_lon),
+            pv_peak_watts=float(settings.pv_peak_watts or 4000.0),
+        )
+    return StubForecastProvider(peak_watts=float(settings.pv_peak_watts or 4000.0))
 
 def _recalc_plan(state: HeliosState) -> None:
     # Retrieve price curve using provider abstraction
