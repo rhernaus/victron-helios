@@ -504,15 +504,17 @@ function drawPriceChart(canvas, prices, domainOverride) {
   const y = makeScale(ymin, ymax, H - padB, padT);
   drawAxes(ctx, W, H, y(0));
 
-  // gridlines and Y labels
+  // gridlines and Y labels (consistent ticks)
   ctx.strokeStyle = 'rgba(255,255,255,.06)';
-  for (let g = 0; g <= 5; g++) {
-    const gy = y(ymin + (ymax - ymin) * g / 4);
+  const yTicks = 5; // 5 intervals, 6 gridlines
+  for (let g = 0; g <= yTicks; g++) {
+    const val = ymin + (ymax - ymin) * g / yTicks;
+    const gy = y(val);
     ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(W - padR, gy); ctx.stroke();
     ctx.fillStyle = 'rgba(255,255,255,.6)';
     ctx.font = '12px system-ui, sans-serif';
     ctx.textAlign = 'right';
-    ctx.fillText('€' + (ymin + (ymax - ymin) * g / 5).toFixed(2), padL - 6, gy + 4);
+    ctx.fillText('€' + val.toFixed(2), padL - 6, gy + 4);
   }
 
   function drawLine(key, color) {
