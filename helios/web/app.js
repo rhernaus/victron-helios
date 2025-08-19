@@ -52,6 +52,10 @@ async function refreshStatus() {
     if ($('#current-action')) $('#current-action').textContent = s.current_action || '—';
     if ($('#current-setpoint')) $('#current-setpoint').textContent = (s.current_setpoint_w ?? '—') + (s.current_setpoint_w != null ? ' W' : '');
     if ($('#current-reason')) $('#current-reason').textContent = s.current_reason || '—';
+    if ($('#telemetry-soc')) $('#telemetry-soc').textContent = (s.soc_percent != null) ? `${s.soc_percent}%` : '—';
+    if ($('#telemetry-load')) $('#telemetry-load').textContent = (s.load_w != null) ? `${s.load_w} W` : '—';
+    if ($('#telemetry-solar')) $('#telemetry-solar').textContent = (s.solar_w != null) ? `${s.solar_w} W` : '—';
+    if ($('#telemetry-ev')) $('#telemetry-ev').textContent = s.ev_charger_status ? JSON.stringify(s.ev_charger_status) : '—';
     const btn = $('#pause-resume');
     btn.textContent = s.automation_paused ? 'Resume' : 'Pause';
     btn.dataset.paused = String(s.automation_paused);
