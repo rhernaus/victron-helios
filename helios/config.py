@@ -20,6 +20,11 @@ class HeliosSettings(BaseSettings):
 	dbus_update_interval_seconds: int = Field(default=10, ge=1)
 	scheduler_timezone: str = Field(default="UTC")
 	minimum_action_dwell_seconds: int = Field(default=0, ge=0)
+	# Optional per-action dwell seconds (fallback to minimum_action_dwell_seconds if unset)
+	dwell_seconds_charge_from_grid: Optional[int] = Field(default=None, ge=0)
+	dwell_seconds_discharge_to_load: Optional[int] = Field(default=None, ge=0)
+	dwell_seconds_export_to_grid: Optional[int] = Field(default=None, ge=0)
+	dwell_seconds_idle: Optional[int] = Field(default=None, ge=0)
 	log_level: str = Field(default="INFO")
 	data_dir: str = Field(default="/data/helios")
 
@@ -114,6 +119,10 @@ class ConfigUpdate(BaseModel):
 	dbus_update_interval_seconds: Optional[int] = None
 	scheduler_timezone: Optional[str] = None
 	minimum_action_dwell_seconds: Optional[int] = None
+	dwell_seconds_charge_from_grid: Optional[int] = None
+	dwell_seconds_discharge_to_load: Optional[int] = None
+	dwell_seconds_export_to_grid: Optional[int] = None
+	dwell_seconds_idle: Optional[int] = None
 
 	price_provider: Optional[str] = None
 	price_hysteresis_eur_per_kwh: Optional[float] = None

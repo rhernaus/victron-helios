@@ -86,10 +86,27 @@ class DbusExecutor(Executor):
                 try:
                     import dbus  # type: ignore
 
-                    bus = dbus.SystemBus()
-                    proxy = bus.get_object(
-                        "com.victronenergy.settings", "/Settings/CGwacs/AcPowerSetPoint"
-                    )
+                    # Connect to SystemBus with basic retry to handle transient bus issues
+                    _bus_attempts = 0
+                    _bus: any = None
+                    _proxy: any = None
+                    _max_bus_attempts = 1 + (self.settings.dbus_write_retries if self.settings else 0)
+                    while _bus_attempts < _max_bus_attempts:
+                        try:
+                            _bus = dbus.SystemBus()
+                            _proxy = _bus.get_object(
+                                "com.victronenergy.settings", "/Settings/CGwacs/AcPowerSetPoint"
+                            )
+                            break
+                        except Exception:
+                            _bus_attempts += 1
+                            if self.settings and self.settings.dbus_write_retry_delay_seconds > 0:
+                                import time as _time
+
+                                _time.sleep(self.settings.dbus_write_retry_delay_seconds)
+                    if _proxy is None:
+                        raise RuntimeError("Failed to connect to D-Bus proxy for grid setpoint")
+                    proxy = _proxy
                     # Write with retry/backoff strategy
                     write_retries = 0
                     retry_delay = 0.0

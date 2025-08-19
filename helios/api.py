@@ -21,7 +21,7 @@ from .metrics import (
     planner_runs_total,
     recalc_job_runs_total,
 )
-from .models import ConfigResponse, Plan, StatusResponse
+from .models import Action, ConfigResponse, Plan, StatusResponse
 from .planner import Planner
 from .providers import PriceProvider, StubPriceProvider, TibberPriceProvider
 from .scheduler import HeliosScheduler
@@ -138,6 +138,21 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
         state.scheduler = HeliosScheduler(state)
     # Ensure dwell uses configured minimum immediately
     state.dwell.minimum_dwell_seconds = state.settings.minimum_action_dwell_seconds
+    # Configure per-action dwell mapping
+    state.dwell.per_action_dwell_seconds = {
+        Action.CHARGE_FROM_GRID: state.settings.dwell_seconds_charge_from_grid
+        if state.settings.dwell_seconds_charge_from_grid is not None
+        else state.settings.minimum_action_dwell_seconds,
+        Action.DISCHARGE_TO_LOAD: state.settings.dwell_seconds_discharge_to_load
+        if state.settings.dwell_seconds_discharge_to_load is not None
+        else state.settings.minimum_action_dwell_seconds,
+        Action.EXPORT_TO_GRID: state.settings.dwell_seconds_export_to_grid
+        if state.settings.dwell_seconds_export_to_grid is not None
+        else state.settings.minimum_action_dwell_seconds,
+        Action.IDLE: state.settings.dwell_seconds_idle
+        if state.settings.dwell_seconds_idle is not None
+        else state.settings.minimum_action_dwell_seconds,
+    }
     if state.executor is None:
         state.executor = _select_executor(state.settings, dwell=state.dwell)
     if state.price_provider is None:
@@ -238,8 +253,22 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:
             with state.lock:
                 new_settings = update.apply_to(state.settings)
                 state.settings = new_settings
-                # update dwell controller with new minimum dwell
+                # update dwell controller with new minimum dwell and per-action dwell
                 state.dwell.minimum_dwell_seconds = new_settings.minimum_action_dwell_seconds
+                state.dwell.per_action_dwell_seconds = {
+                    Action.CHARGE_FROM_GRID: new_settings.dwell_seconds_charge_from_grid
+                    if new_settings.dwell_seconds_charge_from_grid is not None
+                    else new_settings.minimum_action_dwell_seconds,
+                    Action.DISCHARGE_TO_LOAD: new_settings.dwell_seconds_discharge_to_load
+                    if new_settings.dwell_seconds_discharge_to_load is not None
+                    else new_settings.minimum_action_dwell_seconds,
+                    Action.EXPORT_TO_GRID: new_settings.dwell_seconds_export_to_grid
+                    if new_settings.dwell_seconds_export_to_grid is not None
+                    else new_settings.minimum_action_dwell_seconds,
+                    Action.IDLE: new_settings.dwell_seconds_idle
+                    if new_settings.dwell_seconds_idle is not None
+                    else new_settings.minimum_action_dwell_seconds,
+                }
                 # swap executor if backend changed
                 state.executor = _select_executor(new_settings, dwell=state.dwell)
                 # swap provider only if selection, token or home changed
