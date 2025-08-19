@@ -15,16 +15,22 @@ class HeliosScheduler:
         self.state = state
         self.scheduler = BackgroundScheduler(timezone=state.settings.scheduler_timezone)
 
-    def start(self, recalc_job: Callable[[], None], control_job: Callable[[], None]) -> None:
+    def start(
+        self,
+        recalc_job: Callable[[], None],
+        control_job: Callable[[], None],
+        telemetry_job: Callable[[], None] | None = None,
+    ) -> None:
         # Listen for misfires to expose as metrics
         self.scheduler.add_listener(lambda event: scheduler_misfires_total.inc(), EVENT_JOB_MISSED)
         self.scheduler.start()
-        self._schedule_jobs(recalc_job, control_job)
+        self._schedule_jobs(recalc_job, control_job, telemetry_job)
 
     def _schedule_jobs(
         self,
         recalc_job: Callable[[], None],
         control_job: Callable[[], None],
+        telemetry_job: Callable[[], None] | None,
     ) -> None:
         settings = self.state.settings
         recalc_interval = settings.recalculation_interval_seconds
@@ -65,10 +71,31 @@ class HeliosScheduler:
             max_instances=1,
             misfire_grace_time=max(1, control_interval),
         )
+        # Optional telemetry job
+        if telemetry_job is not None:
+            tel_interval = max(1, self.state.settings.telemetry_update_interval_seconds)
+            tel_jitter = min(max(0, tel_interval // 10), 2, max(0, tel_interval - 1))
+            self.scheduler.add_job(
+                telemetry_job,
+                IntervalTrigger(
+                    seconds=tel_interval,
+                    jitter=tel_jitter,
+                ),
+                id="telemetry",
+                replace_existing=True,
+                coalesce=True,
+                max_instances=1,
+                misfire_grace_time=max(1, tel_interval),
+            )
 
-    def reschedule(self, recalc_job: Callable[[], None], control_job: Callable[[], None]) -> None:
+    def reschedule(
+        self,
+        recalc_job: Callable[[], None],
+        control_job: Callable[[], None],
+        telemetry_job: Callable[[], None] | None = None,
+    ) -> None:
         self.scheduler.remove_all_jobs()
-        self._schedule_jobs(recalc_job, control_job)
+        self._schedule_jobs(recalc_job, control_job, telemetry_job)
 
     def shutdown(self) -> None:
         self.scheduler.shutdown(wait=False)

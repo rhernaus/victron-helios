@@ -49,6 +49,9 @@ async function refreshStatus() {
     $('#automation-paused').textContent = s.automation_paused ? 'yes' : 'no';
     $('#last-recalc').textContent = fmtTime(s.last_recalc_at);
     $('#last-control').textContent = fmtTime(s.last_control_at);
+    if ($('#current-action')) $('#current-action').textContent = s.current_action || '—';
+    if ($('#current-setpoint')) $('#current-setpoint').textContent = (s.current_setpoint_w ?? '—') + (s.current_setpoint_w != null ? ' W' : '');
+    if ($('#current-reason')) $('#current-reason').textContent = s.current_reason || '—';
     const btn = $('#pause-resume');
     btn.textContent = s.automation_paused ? 'Resume' : 'Pause';
     btn.dataset.paused = String(s.automation_paused);
@@ -68,6 +71,7 @@ async function refreshPlan() {
   try {
     const p = await api('/plan');
     const now = Date.now();
+    if ($('#plan-summary')) $('#plan-summary').textContent = p.summary || '—';
     container.innerHTML = '';
     p.slots.forEach(slot => {
       const start = new Date(slot.start).getTime();
@@ -81,6 +85,7 @@ async function refreshPlan() {
         <div class="time">${new Date(start).toLocaleTimeString()} – ${new Date(end).toLocaleTimeString()}</div>
         <div class="action">${slot.action}</div>
         <div class="muted">setpoint: <strong>${sp} W</strong></div>
+        ${slot.reason ? `<div class="muted">reason: ${slot.reason}</div>` : ''}
       `;
       container.appendChild(div);
     });
@@ -102,7 +107,7 @@ async function refreshConfig() {
     const cfg = resp.data || {};
 
     // Fill quick fields
-    const quickKeys = ['grid_import_limit_w','grid_export_limit_w','grid_sell_enabled','price_hysteresis_eur_per_kwh','executor_backend','price_provider','assumed_current_soc_percent'];
+    const quickKeys = ['grid_import_limit_w','grid_export_limit_w','grid_sell_enabled','price_hysteresis_eur_per_kwh','executor_backend','telemetry_backend','price_provider','assumed_current_soc_percent'];
     quickKeys.forEach(k => {
       const el = document.getElementById(k);
       if (!el) return;
@@ -222,6 +227,12 @@ async function doResume() {
   await refreshStatus();
 }
 
+async function doRecalcNow() {
+  try { await api('/recalc', { method: 'POST' }); toast('Recalculated'); }
+  catch (e) { toast('Recalc failed: ' + e.message, false); }
+  await Promise.all([refreshPlan(), refreshStatus()]);
+}
+
 async function loadMetrics() {
   try { const text = await api('/metrics'); $('#metrics').textContent = text; }
   catch (e) { toast('Failed to load metrics', false); }
@@ -234,7 +245,8 @@ function initTabs() {
       btn.classList.add('active');
       const id = btn.dataset.tab;
       $$('.tab-panel').forEach(p => p.classList.remove('active'));
-      $('#tab-' + id).classList.add('active');
+      const panel = document.getElementById('tab-' + id) || document.querySelector(`#tab-${id}`) || document.getElementById(`tab-${id}`);
+      if (panel) panel.classList.add('active');
     });
   });
 }
@@ -254,6 +266,7 @@ function init() {
   $('#btn-save-secrets').addEventListener('click', saveSecrets);
   $('#btn-save-all').addEventListener('click', saveAll);
   $('#btn-load-metrics').addEventListener('click', loadMetrics);
+  const recalcBtn = $('#btn-recalc-now'); if (recalcBtn) recalcBtn.addEventListener('click', doRecalcNow);
 
   // Header pause/resume
   $('#pause-resume').addEventListener('click', async (e) => {

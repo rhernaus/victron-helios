@@ -23,12 +23,14 @@ class PlanSlot(BaseModel):
             "Positive means import from grid in Watts. Negative means export to grid in Watts."
         )
     )
+    reason: str | None = Field(default=None, description="Brief rationale for this action")
 
 
 class Plan(BaseModel):
     generated_at: datetime
     planning_window_seconds: int
     slots: list[PlanSlot] = Field(default_factory=list)
+    summary: str | None = Field(default=None, description="High-level plan summary")
 
     def slot_for(self, at: datetime) -> Optional[PlanSlot]:
         for slot in self.slots:
@@ -41,6 +43,14 @@ class StatusResponse(BaseModel):
     automation_paused: bool
     last_recalc_at: Optional[datetime]
     last_control_at: Optional[datetime]
+    current_action: Action | None = None
+    current_setpoint_w: int | None = None
+    current_reason: str | None = None
+    # Telemetry snapshot
+    soc_percent: float | None = None
+    load_w: int | None = None
+    solar_w: int | None = None
+    ev_charger_status: dict | None = None
 
 
 class ConfigResponse(BaseModel):

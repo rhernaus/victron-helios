@@ -10,6 +10,7 @@ from .dwell import DwellController
 from .executor import Executor
 from .models import Plan
 from .providers import PriceProvider
+from .telemetry import TelemetryReader, TelemetrySnapshot, NoOpTelemetryReader
 
 if TYPE_CHECKING:
     from .planner import Planner
@@ -23,11 +24,13 @@ class HeliosState:
     planner: Optional[Planner] = None
     executor: Optional[Executor] = None
     price_provider: Optional[PriceProvider] = None
+    telemetry_reader: Optional[TelemetryReader] = None
 
     latest_plan: Optional[Plan] = None
     last_recalc_at: Optional[datetime] = None
     last_control_at: Optional[datetime] = None
     automation_paused: bool = False
+    last_telemetry: TelemetrySnapshot = field(default_factory=TelemetrySnapshot)
     lock: RLock = field(default_factory=RLock)
     dwell: DwellController = field(default_factory=lambda: DwellController(minimum_dwell_seconds=0))
 
@@ -39,6 +42,7 @@ def get_state() -> HeliosState:
     global _global_state
     if _global_state is None:
         _global_state = HeliosState(settings=HeliosSettings())
+        _global_state.telemetry_reader = NoOpTelemetryReader()
     return _global_state
 
 
