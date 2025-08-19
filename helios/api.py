@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import logging
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pathlib import Path
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from .config import ConfigUpdate, HeliosSettings
@@ -340,6 +340,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
             @app.get("/")
             def root_redirect() -> RedirectResponse:
                 return RedirectResponse(url="/ui/")
+
     except Exception:
         # If static mounting fails for any reason, continue serving API only
         logger.warning("Web UI mounting failed; continuing without UI")
