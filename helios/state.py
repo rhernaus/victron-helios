@@ -11,11 +11,12 @@ from .executor import Executor
 from .models import Plan
 from .providers import PriceProvider, ForecastProvider
 from .telemetry import TelemetryReader, TelemetrySnapshot, NoOpTelemetryReader
+
 try:
     # Optional: lightweight SQL storage for telemetry/history in future
-    import sqlite3  # noqa: F401
+    import sqlite3  # type: ignore
 except Exception:  # pragma: no cover - optional
-    pass
+    sqlite3 = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from .planner import Planner
@@ -56,3 +57,17 @@ def _reset_state_for_testing() -> None:
     """Reset global state singleton. For test usage only."""
     global _global_state
     _global_state = None
+
+
+from .providers import PriceProvider, ForecastProvider
+from .telemetry import TelemetryReader, TelemetrySnapshot, NoOpTelemetryReader
+
+try:
+    # Optional: lightweight SQL storage for telemetry/history in future
+    import sqlite3  # noqa: F401
+except Exception:  # pragma: no cover - optional
+    sqlite3 = None  # type: ignore
+
+if TYPE_CHECKING:
+    from .planner import Planner
+    from .scheduler import HeliosScheduler

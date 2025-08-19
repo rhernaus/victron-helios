@@ -46,9 +46,7 @@ class OpenWeatherForecastProvider(ForecastProvider):
 
     def _owm_hourly(self) -> list[dict]:
         # One Call API 3.0: include hourly forecast for next 48h
-        url = (
-            f"https://api.openweathermap.org/data/3.0/onecall?lat={self.lat}&lon={self.lon}&appid={self.api_key}&units=metric&exclude=minutely,current,daily,alerts"
-        )
+        url = f"https://api.openweathermap.org/data/3.0/onecall?lat={self.lat}&lon={self.lon}&appid={self.api_key}&units=metric&exclude=minutely,current,daily,alerts"
         with httpx.Client(timeout=10) as client:
             resp = client.get(url)
             resp.raise_for_status()

@@ -63,14 +63,20 @@ def _select_telemetry_reader(settings: HeliosSettings):
 
 def _select_forecast_provider(settings: HeliosSettings) -> ForecastProvider:
     # Use OpenWeather if API key and location are configured; otherwise stub
-    if settings.openweather_api_key and settings.location_lat is not None and settings.location_lon is not None:
+    use_ow = (
+        settings.openweather_api_key
+        and settings.location_lat is not None
+        and settings.location_lon is not None
+    )
+    if use_ow:
         return OpenWeatherForecastProvider(
-            api_key=settings.openweather_api_key,
-            lat=float(settings.location_lat),
-            lon=float(settings.location_lon),
+            api_key=str(settings.openweather_api_key),
+            lat=float(settings.location_lat or 0.0),
+            lon=float(settings.location_lon or 0.0),
             pv_peak_watts=float(settings.pv_peak_watts or 4000.0),
         )
     return StubForecastProvider(peak_watts=float(settings.pv_peak_watts or 4000.0))
+
 
 def _recalc_plan(state: HeliosState) -> None:
     # Retrieve price curve using provider abstraction
@@ -116,8 +122,16 @@ def _recalc_plan(state: HeliosState) -> None:
         forecast = state.forecast_provider or _select_forecast_provider(settings_snapshot)
     except Exception:
         forecast = None
-    solar_fc = forecast.get_solar_forecast(start_hour, start_hour + timedelta(hours=horizon_hours)) if forecast else None
-    load_fc = forecast.get_load_forecast(start_hour, start_hour + timedelta(hours=horizon_hours)) if forecast else None
+    solar_fc = (
+        forecast.get_solar_forecast(start_hour, start_hour + timedelta(hours=horizon_hours))
+        if forecast
+        else None
+    )
+    load_fc = (
+        forecast.get_load_forecast(start_hour, start_hour + timedelta(hours=horizon_hours))
+        if forecast
+        else None
+    )
 
     planner: Planner = state.planner  # type: ignore[assignment]
     plan: Plan = planner.build_plan(
@@ -240,10 +254,15 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                 db_path.parent.mkdir(parents=True, exist_ok=True)
                 with closing(sqlite3.connect(str(db_path))) as conn:
                     conn.execute(
-                        "CREATE TABLE IF NOT EXISTS telemetry (ts INTEGER PRIMARY KEY, soc REAL, load INTEGER, solar INTEGER)"
+                        "CREATE TABLE IF NOT EXISTS telemetry ("
+                        "ts INTEGER PRIMARY KEY, "
+                        "soc REAL, load INTEGER, solar INTEGER)"
                     )
                     conn.execute(
-                        "INSERT OR REPLACE INTO telemetry(ts, soc, load, solar) VALUES (?, ?, ?, ?)",
+                        (
+                            "INSERT OR REPLACE INTO telemetry("
+                            "ts, soc, load, solar) VALUES (?, ?, ?, ?)"
+                        ),
                         (
                             int(datetime.now(timezone.utc).timestamp()),
                             snap.soc_percent if snap.soc_percent is not None else None,
@@ -252,8 +271,8 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                         ),
                     )
                     conn.commit()
-            except Exception:
-                pass
+            except Exception as db_exc:
+                logger.debug("Telemetry DB write failed: %s", db_exc)
         except Exception as exc:
             # Keep last snapshot but record the failure for diagnostics
             logger.debug("Telemetry read failed: %s", exc)
@@ -354,10 +373,16 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
         except Exception:
             rows = []
         rows.reverse()
-        items = [
-            {"t": datetime.fromtimestamp(r[0], tz=timezone.utc).isoformat(), "soc": r[1], "load": r[2], "solar": r[3]}
-            for r in rows
-        ]
+        items = []
+        for r in rows:
+            items.append(
+                {
+                    "t": datetime.fromtimestamp(r[0], tz=timezone.utc).isoformat(),
+                    "soc": r[1],
+                    "load": r[2],
+                    "solar": r[3],
+                }
+            )
         return {"items": items}
 
     @app.get("/config", response_model=ConfigResponse)
@@ -493,8 +518,14 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
         )
 
         def to_buy_sell(raw: float) -> tuple[float, float]:
-            buy = raw * settings_snapshot.buy_price_multiplier + settings_snapshot.buy_price_fixed_fee_eur_per_kwh
-            sell = raw * settings_snapshot.sell_price_multiplier - settings_snapshot.sell_price_fixed_deduction_eur_per_kwh
+            buy = (
+                raw * settings_snapshot.buy_price_multiplier
+                + settings_snapshot.buy_price_fixed_fee_eur_per_kwh
+            )
+            sell = (
+                raw * settings_snapshot.sell_price_multiplier
+                - settings_snapshot.sell_price_fixed_deduction_eur_per_kwh
+            )
             return buy, sell
 
         items = []
@@ -557,12 +588,13 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                 }
             )
 
-        prices = [
-            {"t": t.isoformat(), "raw": p}
-            for (t, p) in price_series
-        ]
+        prices = [{"t": t.isoformat(), "raw": p} for (t, p) in price_series]
 
-        return {"plan_generated_at": plan.generated_at.isoformat(), "slots": slot_items, "prices": prices}
+        return {
+            "plan_generated_at": plan.generated_at.isoformat(),
+            "slots": slot_items,
+            "prices": prices,
+        }
 
     # --- Web UI mounting ---
     try:
