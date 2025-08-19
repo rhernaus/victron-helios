@@ -189,9 +189,9 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
             snap = reader.read()
             with state.lock:
                 state.last_telemetry = snap
-        except Exception:
-            # ignore telemetry failures; keep last snapshot
-            pass
+        except Exception as exc:
+            # Keep last snapshot but record the failure for diagnostics
+            logger.debug("Telemetry read failed: %s", exc)
 
     @app.on_event("startup")
     def on_startup() -> None:
