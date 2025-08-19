@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 import logging
+from typing import Any
 
 from .config import HeliosSettings
 from .dwell import DwellController
@@ -89,8 +90,8 @@ class DbusExecutor(Executor):
 
                     # Connect to SystemBus with basic retry to handle transient bus issues
                     _bus_attempts = 0
-                    _bus: object | None = None
-                    _proxy: object | None = None
+                    _bus: Any = None
+                    _proxy: Any = None
                     _max_bus_attempts = 1 + (
                         self.settings.dbus_write_retries if self.settings else 0
                     )
