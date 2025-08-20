@@ -83,10 +83,13 @@ async function refreshPlan() {
     const p = await api('/plan');
     // Also fetch price series for graphs for current domain
     let priceData = null;
+    let metersData = null;
     try {
       const domain = computeGlobalDomain(p, window.__lastPrices);
       const qs = domain ? `?from=${Math.floor(domain[0]/1000)}&to=${Math.floor(domain[1]/1000)}` : '';
       priceData = await api('/prices' + qs);
+      // Fetch meters dataset with 1-minute resolution
+      metersData = await api('/meters/series' + qs + '&resolution_seconds=60');
     } catch (_) { priceData = null; }
     const now = Date.now();
     if ($('#plan-summary')) $('#plan-summary').textContent = p.summary || '—';
@@ -111,8 +114,9 @@ async function refreshPlan() {
     // Persist last loaded datasets and render charts
     window.__lastPlan = p;
     window.__lastPrices = priceData;
+    window.__lastMeters = metersData;
     // Render charts when plan and optional prices are available
-    try { renderCharts(p, priceData); } catch(e) { /* best-effort; keep UI */ }
+    try { renderCharts(p, priceData, metersData); } catch(e) { /* best-effort; keep UI */ }
   } catch (e) {
     container.innerHTML = '<div class="muted">Plan not ready</div>';
   }
@@ -345,10 +349,11 @@ function init() {
 document.addEventListener('DOMContentLoaded', init);
 
 // ----- Charts (lightweight canvas rendering; no external deps) -----
-function renderCharts(plan, prices) {
+function renderCharts(plan, prices, meters) {
   const domain = computeGlobalDomain(plan, prices);
   drawPriceChart($('#chart-prices'), prices, domain);
   drawEnergyChart($('#chart-energy'), plan, domain);
+  drawMetersChart($('#chart-meters'), meters, domain);
   drawCostsChart($('#chart-costs'), plan, prices, domain);
 }
 
@@ -587,6 +592,119 @@ function drawPriceChart(canvas, prices, domainOverride) {
       x: tx,
       y: my,
       html: `${labelStart}–${labelEnd}<br>Buy: <b>${(nearest.buy ?? nearest.raw).toFixed(3)}</b><br>Sell: <b>${(nearest.sell ?? nearest.raw).toFixed(3)}</b>`
+    };
+  });
+}
+
+function drawMetersChart(canvas, meters, domainOverride) {
+  if (!canvas) return;
+  const { ctx, W, H } = clearCanvas(canvas);
+  if (!ctx) return;
+  const padL = 40, padB = 24, padT = 10, padR = 10;
+
+  const items = (meters && meters.items) ? meters.items : [];
+  let tmin = items.length ? new Date(items[0].t).getTime() : Date.now() - 3600_000;
+  let tmax = items.length ? new Date(items[items.length-1].t).getTime() + (meters.resolution_seconds||60)*1000 : tmin + 3600_000;
+  if (domainOverride) { tmin = domainOverride[0]; tmax = domainOverride[1]; }
+
+  // Use kWh per bucket; show import/export positive/negative, solar and home positive
+  let ymin = Math.min(0, ...items.map(it => - (it.grid_export_kwh || 0)));
+  let ymax = Math.max(0.01, ...items.map(it => Math.max(it.grid_import_kwh||0, it.solar_kwh||0, it.home_kwh||0)));
+  const ypad = (ymax - ymin) * 0.05 || 0.05;
+  ymin -= ypad; ymax += ypad;
+  const x = makeScale(tmin, tmax, padL, W - padR);
+  const y = makeScale(ymin, ymax, H - padB, padT);
+  drawAxes(ctx, W, H, y(0));
+
+  // Y labels
+  ctx.fillStyle = 'rgba(255,255,255,.7)';
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.textAlign = 'right';
+  const yTicks = 4;
+  for (let g = 0; g <= yTicks; g++) {
+    const val = ymin + (ymax - ymin) * g / yTicks;
+    const gy = y(val);
+    ctx.fillText(val.toFixed(2) + ' kWh', 34, gy + 4);
+  }
+
+  // Draw step lines with dashed future
+  function drawSeries(getVal, color, sign=1) {
+    const now = Date.now();
+    ctx.lineWidth = 2;
+    let segment = [];
+    const flush = (predicted) => {
+      if (segment.length < 2) { segment = []; return; }
+      ctx.beginPath();
+      ctx.setLineDash(predicted ? [6, 4] : []);
+      ctx.strokeStyle = color;
+      segment.forEach((pt, i) => { if (i===0) ctx.moveTo(pt[0], pt[1]); else ctx.lineTo(pt[0], pt[1]); });
+      ctx.stroke();
+      ctx.setLineDash([]);
+      segment = [];
+    };
+    items.forEach(it => {
+      const tt = new Date(it.t).getTime();
+      const tx = x(tt);
+      const val = (getVal(it) || 0) * sign;
+      const ty = y(val);
+      const future = tt >= now;
+      if (segment.length && segment._future !== future) { flush(segment._future); }
+      segment._future = future;
+      segment.push([tx, ty]);
+    });
+    flush(segment._future);
+  }
+
+  drawSeries(it => it.grid_import_kwh, '#ef4444', +1);
+  drawSeries(it => it.grid_export_kwh, '#84cc16', -1); // show export below zero
+  drawSeries(it => it.solar_kwh, '#f59e0b', +1);
+  drawSeries(it => it.home_kwh, '#fde047', +1);
+
+  // Shared hour ticks
+  drawHourTicks(ctx, x, tmin, tmax, H, padL, padR);
+
+  // legend
+  const legend = $('#legend-meters');
+  if (legend) legend.innerHTML = `
+    <div class="key"><span class="swatch" style="background:#ef4444"></span> Grid import</div>
+    <div class="key"><span class="swatch" style="background:#84cc16"></span> Grid export</div>
+    <div class="key"><span class="swatch" style="background:#f59e0b"></span> Solar production</div>
+    <div class="key"><span class="swatch" style="background:#fde047"></span> Home consumption</div>
+  `;
+
+  // Hover tooltip
+  attachHover(canvas, (mx, my) => {
+    // find nearest bucket
+    let nearest = null; let best = Infinity;
+    for (const it of items) {
+      const tt = new Date(it.t).getTime();
+      const dx = Math.abs(mx - x(tt));
+      if (dx < best) { best = dx; nearest = it; }
+    }
+    if (!nearest || best > 30) return null;
+    const tt = new Date(nearest.t);
+    const tx = x(new Date(nearest.t).getTime());
+    const band = document.getElementById('chart-hoverband');
+    if (band) {
+      const rect = canvas.getBoundingClientRect();
+      const bw = Math.abs(x(tt.getTime() + (meters?.resolution_seconds||60)*1000) - x(tt.getTime()));
+      band.style.left = `${rect.left + tx - bw/2}px`;
+      band.style.top = `${rect.top + 10}px`;
+      band.style.width = `${bw}px`;
+      band.style.height = `${H - 34}px`;
+      band.hidden = false;
+    }
+    const labelStart = tt.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
+    const labelEnd = new Date(tt.getTime() + (meters?.resolution_seconds||60)*1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
+    return {
+      x: tx,
+      y: my,
+      html: `${labelStart}–${labelEnd}`
+        + `<br>Grid import: <b>${(nearest.grid_import_kwh||0).toFixed(3)} kWh</b>`
+        + `<br>Grid export: <b>${(nearest.grid_export_kwh||0).toFixed(3)} kWh</b>`
+        + `<br>Solar: <b>${(nearest.solar_kwh||0).toFixed(3)} kWh</b>`
+        + `<br>Home: <b>${(nearest.home_kwh||0).toFixed(3)} kWh</b>`
+        + (nearest.self_sufficiency != null ? `<br>Self-sufficiency: <b>${(nearest.self_sufficiency*100).toFixed(1)}%</b>` : '')
     };
   });
 }

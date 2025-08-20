@@ -18,6 +18,7 @@ class HeliosSettings(BaseSettings):
     recalculation_interval_seconds: int = Field(default=300, ge=30)
     dbus_update_interval_seconds: int = Field(default=10, ge=1)
     telemetry_update_interval_seconds: int = Field(default=10, ge=1)
+    counters_update_interval_seconds: int = Field(default=60, ge=5)
     scheduler_timezone: str = Field(default="UTC")
     minimum_action_dwell_seconds: int = Field(default=0, ge=0)
     # Optional per-action dwell seconds (fallback to minimum_action_dwell_seconds if unset)
@@ -138,6 +139,7 @@ class ConfigUpdate(BaseModel):
     recalculation_interval_seconds: int | None = None
     dbus_update_interval_seconds: int | None = None
     telemetry_update_interval_seconds: int | None = None
+    counters_update_interval_seconds: int | None = None
     scheduler_timezone: str | None = None
     minimum_action_dwell_seconds: int | None = None
     dwell_seconds_charge_from_grid: int | None = None
