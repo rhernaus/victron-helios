@@ -132,7 +132,7 @@ class DbusExecutor(Executor):
                             try:
                                 props.Set("com.victronenergy.BusItem", "Value", int(target))
                                 break
-                            except Exception as _:
+                            except Exception:
                                 if attempt >= write_retries:
                                     raise
                                 attempt += 1
