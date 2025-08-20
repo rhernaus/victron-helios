@@ -88,10 +88,19 @@ git -C /data clone <REPO_URL> helios
 4) Create and activate a Python virtual environment, then install dependencies:
 
 ```bash
-python3 -m venv /data/helios/.venv
+python3 -m venv --system-site-packages /data/helios/.venv
 source /data/helios/.venv/bin/activate
 pip install -U pip
 pip install -r /data/helios/requirements.txt
+
+# Verify dbus is importable inside the venv (provided by Venus OS)
+python3 -c "import dbus, sys; print('dbus-python OK', getattr(dbus,'__version__','?'))"
+```
+
+Why --system-site-packages? Helios reads telemetry via D‑Bus (`dbus-python`), which on Venus OS is provided by the system packages (not via pip). Creating the venv with `--system-site-packages` makes the system `dbus-python` visible inside the venv. If you created the venv without this flag, recreate it with the flag, or as a workaround set `PYTHONPATH` to the system site‑packages directory when launching the app, for example:
+
+```bash
+PYTHONPATH=/usr/lib/python3/dist-packages uvicorn main:app --host 127.0.0.1 --port 8080
 ```
 
 5) Run the API:
