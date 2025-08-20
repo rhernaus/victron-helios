@@ -2,15 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-from typing import Optional
 
 
 @dataclass
 class TelemetrySnapshot:
-    soc_percent: Optional[float] = None
-    load_w: Optional[int] = None
-    solar_w: Optional[int] = None
-    ev_status: Optional[dict] = None
+    soc_percent: float | None = None
+    load_w: int | None = None
+    solar_w: int | None = None
+    ev_status: dict | None = None
 
 
 class TelemetryReader:
@@ -50,7 +49,13 @@ class DbusTelemetryReader(TelemetryReader):  # pragma: no cover - hardware speci
         except Exception:
             return None
 
-    def _sum_phases(self, bus, service: str, base: str) -> int | float | None:  # type: ignore[no-untyped-def]
+    # Ignore untyped signature for dbus types; line split to respect line length
+    def _sum_phases(  # type: ignore[no-untyped-def]
+        self,
+        bus,
+        service: str,
+        base: str,
+    ) -> int | float | None:
         total = 0.0
         found = False
         for phase in ("L1", "L2", "L3"):

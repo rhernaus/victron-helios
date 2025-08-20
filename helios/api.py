@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import logging
 from pathlib import Path
-from typing import Optional
+from contextlib import closing
 
 from fastapi import FastAPI, HTTPException, Response, Query
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -39,7 +39,6 @@ try:  # optional dependency for local telemetry storage
     import sqlite3  # type: ignore
 except Exception:  # pragma: no cover - optional
     sqlite3 = None  # type: ignore[assignment]
-from contextlib import closing
 
 logger = logging.getLogger("helios")
 
@@ -172,7 +171,7 @@ def _do_control(state: HeliosState) -> None:
     control_ticks_total.inc()
 
 
-def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  # noqa: C901
+def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # noqa: C901
     app = FastAPI(default_response_class=JSONResponse)
 
     state = get_state()
@@ -367,15 +366,15 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
     @app.get("/telemetry/history")
     def telemetry_history(
         limit: int = 500,
-        from_: Optional[str] = Query(default=None, alias="from"),
-        to: Optional[str] = Query(default=None, alias="to"),
+        from_: str | None = Query(default=None, alias="from"),
+        to: str | None = Query(default=None, alias="to"),
     ) -> dict:
         """Return recent telemetry rows from the local SQLite store.
 
         This is a simple built-in time-series store to bootstrap forecasting.
         """
 
-        def _parse_ts(q: Optional[str]) -> Optional[int]:
+        def _parse_ts(q: str | None) -> int | None:
             if q is None:
                 return None
             try:
@@ -499,7 +498,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                     logger.warning("Failed to persist settings to disk")
                 return ConfigResponse(data=state.settings.to_public_dict())
         except Exception as exc:  # validation or other issues
-            raise HTTPException(status_code=400, detail=str(exc)) from None
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/status", response_model=StatusResponse)
     def status() -> StatusResponse:
@@ -541,8 +540,8 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
 
     @app.get("/prices")
     def get_prices(
-        from_: Optional[str] = Query(default=None, alias="from"),
-        to: Optional[str] = Query(default=None, alias="to"),
+        from_: str | None = Query(default=None, alias="from"),
+        to: str | None = Query(default=None, alias="to"),
     ) -> dict:  # pragma: no cover - exercised via UI, not tests
         """Return the current planning horizon price series and derived buy/sell prices.
 
@@ -560,7 +559,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
         now = datetime.now(timezone.utc)
 
         # Parse optional range params (epoch seconds or ISO). Default to planning horizon
-        def _parse_ts(q: Optional[str]) -> Optional[int]:
+        def _parse_ts(q: str | None) -> int | None:
             if q is None:
                 return None
             try:
