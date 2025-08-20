@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 from pathlib import Path
 from typing import Optional
+from contextlib import closing
 
 from fastapi import FastAPI, HTTPException, Response, Query
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -39,7 +40,6 @@ try:  # optional dependency for local telemetry storage
     import sqlite3  # type: ignore
 except Exception:  # pragma: no cover - optional
     sqlite3 = None  # type: ignore[assignment]
-from contextlib import closing
 
 logger = logging.getLogger("helios")
 
@@ -499,7 +499,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                     logger.warning("Failed to persist settings to disk")
                 return ConfigResponse(data=state.settings.to_public_dict())
         except Exception as exc:  # validation or other issues
-            raise HTTPException(status_code=400, detail=str(exc)) from None
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/status", response_model=StatusResponse)
     def status() -> StatusResponse:
