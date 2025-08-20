@@ -322,14 +322,12 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
             counters: list[tuple[str, str, int, int]] = []  # (metric, source, ts, value_wh)
 
             # Grid import/export (kWh -> Wh)
-            grid_fwd = (
-                read_value(bus, "com.victronenergy.system", "/Ac/Grid/Energy/Forward")
-                or read_value(bus, "com.victronenergy.grid", "/Ac/Energy/Forward")
-            )
-            grid_rev = (
-                read_value(bus, "com.victronenergy.system", "/Ac/Grid/Energy/Reverse")
-                or read_value(bus, "com.victronenergy.grid", "/Ac/Energy/Reverse")
-            )
+            grid_fwd = read_value(
+                bus, "com.victronenergy.system", "/Ac/Grid/Energy/Forward"
+            ) or read_value(bus, "com.victronenergy.grid", "/Ac/Energy/Forward")
+            grid_rev = read_value(
+                bus, "com.victronenergy.system", "/Ac/Grid/Energy/Reverse"
+            ) or read_value(bus, "com.victronenergy.grid", "/Ac/Energy/Reverse")
             if isinstance(grid_fwd, (int, float)):
                 counters.append(("grid_import", "system", ts_minute, int(round(grid_fwd * 1000))))
             if isinstance(grid_rev, (int, float)):
@@ -440,8 +438,11 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
         # prime counters once quickly
         try:
             counters_job()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                "Initial counters job run failed; continuing without counters prime: %s",
+                exc,
+            )
 
     @app.on_event("shutdown")
     def on_shutdown() -> None:
@@ -835,6 +836,7 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
         Historical portion uses cumulative counters from SQLite. Future portion uses
         forecast provider (solar and load) to estimate flows, ignoring battery.
         """
+
         # Parse range
         def _parse_ts(q: str | None) -> int | None:
             if q is None:
@@ -879,7 +881,7 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
                     conn.row_factory = sqlite3.Row  # type: ignore[attr-defined]
                     # Fetch rows for all metrics for [bucket_start - res, hist_end]
                     query = (
-                        "SELECT metric, source, ts, value_wh FROM meter_counters "
+                        "SELECT metric, source, ts, value_wh FROM meter_counters "  # nosec B608
                         "WHERE ts >= ? AND ts <= ? AND metric IN ("
                         + ",".join(["?"] * len(metrics))
                         + ") ORDER BY metric ASC, source ASC, ts ASC"
@@ -979,7 +981,9 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
                 obj["grid_export_kwh"] = round(float(obj.get("grid_export_kwh", 0.0)) + exp, 6)
                 self_solar = max(0.0, min(obj["solar_kwh"], obj["home_kwh"]))
                 obj["self_consumed_solar_kwh"] = round(self_solar, 6)
-                obj["self_sufficiency"] = round((self_solar / obj["home_kwh"]) if obj["home_kwh"] > 1e-9 else 0.0, 6)
+                obj["self_sufficiency"] = round(
+                    (self_solar / obj["home_kwh"]) if obj["home_kwh"] > 1e-9 else 0.0, 6
+                )
                 t += res
 
         # Emit sorted items with only expected keys
@@ -1009,6 +1013,7 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
 
         Response items are sorted by day (UTC) and include totals in kWh and self-sufficiency.
         """
+
         def _parse_ts(q: str | None) -> int | None:
             if q is None:
                 return None
@@ -1030,13 +1035,23 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
             raise HTTPException(status_code=400, detail="invalid from/to range")
 
         # Align to UTC midnights
-        start_day = datetime.fromtimestamp(fr, tz=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        end_day = datetime.fromtimestamp(to_ts, tz=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_day = datetime.fromtimestamp(fr, tz=timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        end_day = datetime.fromtimestamp(to_ts, tz=timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         end_inclusive = end_day + timedelta(days=1)
         start_ts = int(start_day.timestamp())
         end_ts = int(end_inclusive.timestamp())
 
-        metrics = ["grid_import", "grid_export", "solar_production", "load_consumption", "ev_delivered_total"]
+        metrics = [
+            "grid_import",
+            "grid_export",
+            "solar_production",
+            "load_consumption",
+            "ev_delivered_total",
+        ]
         day_map: dict[str, dict] = {}
         if sqlite3 is not None:
             try:
@@ -1045,14 +1060,17 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
                     conn.row_factory = sqlite3.Row  # type: ignore[attr-defined]
                     cur = conn.execute(
                         (
-                            "SELECT metric, source, ts, value_wh FROM meter_counters "
-                            "WHERE ts >= ? AND ts <= ? AND metric IN (" + ",".join(["?"] * len(metrics)) + ") "
+                            "SELECT metric, source, ts, value_wh FROM meter_counters "  # nosec B608
+                            "WHERE ts >= ? AND ts <= ? AND metric IN ("
+                            + ",".join(["?"] * len(metrics))
+                            + ") "
                             "ORDER BY metric ASC, source ASC, ts ASC"
                         ),
                         (start_ts - 86400, end_ts) + tuple(metrics),
                     )
                     rows = list(cur)
                 from collections import defaultdict
+
                 series: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
                 for r in rows:
                     series[(r["metric"], r["source"])].append((int(r["ts"]), int(r["value_wh"])))
@@ -1061,7 +1079,7 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
                     obj = day_map.setdefault(day_key, {"day": day_key})
                     obj[metric_key] = obj.get(metric_key, 0) + wh
 
-                for (metric, source), pairs in series.items():
+                for (metric, _source), pairs in series.items():
                     prev_val = None
                     for ts, val in pairs:
                         if prev_val is not None:
@@ -1069,7 +1087,9 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
                             if delta < 0:
                                 prev_val = val
                                 continue
-                            day_key = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+                            day_key = datetime.fromtimestamp(ts, tz=timezone.utc).strftime(
+                                "%Y-%m-%d"
+                            )
                             add_delta(day_key, metric + "_wh", int(delta))
                         prev_val = val
             except Exception as db_exc:
@@ -1099,7 +1119,11 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
                 }
             )
         # Filter to requested day range
-        out = [o for o in out if start_day.strftime("%Y-%m-%d") <= o["day"] <= end_day.strftime("%Y-%m-%d")]
+        out = [
+            o
+            for o in out
+            if start_day.strftime("%Y-%m-%d") <= o["day"] <= end_day.strftime("%Y-%m-%d")
+        ]
         return {"items": out}
 
     @app.get("/export")
@@ -1171,4 +1195,3 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
         logger.warning("Web UI mounting failed; continuing without UI")
 
     return app
-
