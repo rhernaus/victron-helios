@@ -2,6 +2,13 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
+// Global UI/app state for synchronized X-axis
+const __appState = {
+  xDomainMode: 'auto', // 'auto' | 'plan' | 'prices' | 'today' | 'yesterday' | 'last24h' | 'next24h' | 'custom'
+  xFromMs: null,
+  xToMs: null,
+};
+
 function fmtTime(iso) {
   if (!iso) return '—';
   try { return new Date(iso).toLocaleString(); } catch { return String(iso); }
@@ -74,9 +81,13 @@ async function refreshPlan() {
   const container = $('#plan-container');
   try {
     const p = await api('/plan');
-    // Also fetch price series for graphs
+    // Also fetch price series for graphs for current domain
     let priceData = null;
-    try { priceData = await api('/prices'); } catch (_) { priceData = null; }
+    try {
+      const domain = computeGlobalDomain(p, window.__lastPrices);
+      const qs = domain ? `?from=${Math.floor(domain[0]/1000)}&to=${Math.floor(domain[1]/1000)}` : '';
+      priceData = await api('/prices' + qs);
+    } catch (_) { priceData = null; }
     const now = Date.now();
     if ($('#plan-summary')) $('#plan-summary').textContent = p.summary || '—';
     container.innerHTML = '';
@@ -97,6 +108,9 @@ async function refreshPlan() {
       container.appendChild(div);
     });
 
+    // Persist last loaded datasets and render charts
+    window.__lastPlan = p;
+    window.__lastPrices = priceData;
     // Render charts when plan and optional prices are available
     try { renderCharts(p, priceData); } catch(e) { /* best-effort; keep UI */ }
   } catch (e) {
@@ -279,6 +293,40 @@ function init() {
   $('#btn-load-metrics').addEventListener('click', loadMetrics);
   const recalcBtn = $('#btn-recalc-now'); if (recalcBtn) recalcBtn.addEventListener('click', doRecalcNow);
 
+  // Range selector for synchronized X-axis
+  const rangeSel = $('#x-range');
+  const customWrap = $('#x-range-custom');
+  const fromInp = $('#x-from');
+  const toInp = $('#x-to');
+  const applyBtn = $('#btn-apply-range');
+  if (rangeSel) {
+    const refreshFromState = () => { if (customWrap) customWrap.style.display = (rangeSel.value === 'custom') ? 'inline-flex' : 'none'; };
+    refreshFromState();
+    rangeSel.addEventListener('change', () => {
+      __appState.xDomainMode = rangeSel.value;
+      refreshFromState();
+      const p = window.__lastPlan;
+      const domain = computeGlobalDomain(p, window.__lastPrices);
+      const qs = domain ? `?from=${Math.floor(domain[0]/1000)}&to=${Math.floor(domain[1]/1000)}` : '';
+      api('/prices' + qs)
+        .then((pd) => { window.__lastPrices = pd; renderCharts(p, pd); })
+        .catch(() => { try { renderCharts(p, window.__lastPrices); } catch(_) {} });
+    });
+    if (applyBtn) {
+      applyBtn.addEventListener('click', () => {
+        const from = fromInp && fromInp.value ? new Date(fromInp.value).getTime() : null;
+        const to = toInp && toInp.value ? new Date(toInp.value).getTime() : null;
+        if (from && to && to > from) { __appState.xFromMs = from; __appState.xToMs = to; __appState.xDomainMode = 'custom'; }
+        const p = window.__lastPlan;
+        const domain = computeGlobalDomain(p, window.__lastPrices);
+        const qs = domain ? `?from=${Math.floor(domain[0]/1000)}&to=${Math.floor(domain[1]/1000)}` : '';
+        api('/prices' + qs)
+          .then((pd) => { window.__lastPrices = pd; renderCharts(p, pd); })
+          .catch(() => { try { renderCharts(p, window.__lastPrices); } catch(_) {} });
+      });
+    }
+  }
+
   // Header pause/resume
   $('#pause-resume').addEventListener('click', async (e) => {
     const paused = e.currentTarget.dataset.paused === 'true';
@@ -298,9 +346,10 @@ document.addEventListener('DOMContentLoaded', init);
 
 // ----- Charts (lightweight canvas rendering; no external deps) -----
 function renderCharts(plan, prices) {
-  drawPriceChart($('#chart-prices'), prices);
-  drawEnergyChart($('#chart-energy'), plan);
-  drawCostsChart($('#chart-costs'), plan, prices);
+  const domain = computeGlobalDomain(plan, prices);
+  drawPriceChart($('#chart-prices'), prices, domain);
+  drawEnergyChart($('#chart-energy'), plan, domain);
+  drawCostsChart($('#chart-costs'), plan, prices, domain);
 }
 
 function makeScale(domainMin, domainMax, rangeMin, rangeMax) {
@@ -313,8 +362,9 @@ function clearCanvas(canvas) {
   if (!canvas) return { ctx: null, W: 0, H: 0 };
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
-  const W = Math.min(2000, canvas.clientWidth || canvas.width);
-  const H = canvas.clientHeight || canvas.height;
+  const W = Math.min(1200, canvas.clientWidth || canvas.width);
+  const rawH = (canvas.clientHeight || canvas.height || 500);
+  const H = Math.min(500, rawH);
   canvas.width = Math.floor(W * dpr);
   canvas.height = Math.floor(H * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -373,30 +423,98 @@ function timeDomainFromPlan(plan) {
   return [start, end];
 }
 
-function drawPriceChart(canvas, prices) {
+function timeDomainFromPrices(prices) {
+  const items = (prices && prices.items) ? prices.items : [];
+  if (!items.length) { const now = Date.now(); return [now, now + 3600_000]; }
+  const start = new Date(items[0].t).getTime();
+  const end = new Date(items[items.length - 1].t).getTime() + 3600_000;
+  return [start, end];
+}
+
+function computeGlobalDomain(plan, prices) {
+  const hour = 3600_000;
+  const [p0, p1] = timeDomainFromPlan(plan);
+  const [r0, r1] = timeDomainFromPrices(prices);
+  const union = [Math.min(p0, r0), Math.max(p1, r1)];
+  const now = Date.now();
+  switch (__appState.xDomainMode) {
+    case 'plan': return [p0, p1];
+    case 'prices': return [r0, r1];
+    case 'today': {
+      const d = new Date(); d.setHours(0,0,0,0); const from = d.getTime(); return [from, from + 24*hour];
+    }
+    case 'yesterday': {
+      const d = new Date(); d.setHours(0,0,0,0); const to = d.getTime(); return [to - 24*hour, to];
+    }
+    case 'last24h': return [now - 24*hour, now];
+    case 'next24h': return [now, now + 24*hour];
+    case 'custom': {
+      if (__appState.xFromMs && __appState.xToMs && __appState.xToMs > __appState.xFromMs) return [__appState.xFromMs, __appState.xToMs];
+      return union;
+    }
+    case 'auto':
+    default: return union;
+  }
+}
+
+function formatLocalDate(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+
+function drawHourTicks(ctx, x, tmin, tmax, H, padL, padR) {
+  const hour = 3600_000;
+  let t = Math.ceil(tmin / hour) * hour;
+  ctx.fillStyle = 'rgba(255,255,255,.6)';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.strokeStyle = 'rgba(255,255,255,.06)';
+  ctx.lineWidth = 1;
+  for (; t <= tmax; t += hour) {
+    const tx = x(t);
+    ctx.beginPath(); ctx.moveTo(tx, 10); ctx.lineTo(tx, H - 24); ctx.stroke();
+    const d = new Date(t);
+    const isMidnight = d.getHours() === 0;
+    const label = isMidnight ? formatLocalDate(d) : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
+    ctx.save();
+    ctx.translate(tx, H); // place below the axis
+    ctx.rotate(-Math.PI / 4);
+    ctx.fillText(label, 4, 0);
+    ctx.restore();
+  }
+}
+
+function drawPriceChart(canvas, prices, domainOverride) {
   if (!canvas) return;
   const { ctx, W, H } = clearCanvas(canvas);
   if (!ctx) return;
   const padL = 40, padB = 24, padT = 10, padR = 10;
 
   const items = (prices && prices.items) ? prices.items : [];
-  const tmin = items.length ? new Date(items[0].t).getTime() : Date.now();
-  const tmax = items.length ? new Date(items[items.length-1].t).getTime() + 3600_000 : tmin + 3600_000;
-  const ymin = Math.min(0, ...items.map(i => Math.min(i.buy ?? i.raw, i.sell ?? i.raw)));
-  const ymax = Math.max(0.01, ...items.map(i => Math.max(i.buy ?? i.raw, i.sell ?? i.raw)));
+  let tmin = items.length ? new Date(items[0].t).getTime() : Date.now();
+  let tmax = items.length ? new Date(items[items.length-1].t).getTime() + 3600_000 : tmin + 3600_000;
+  if (domainOverride) { tmin = domainOverride[0]; tmax = domainOverride[1]; }
+  let ymin = Math.min(0, ...items.map(i => Math.min(i.buy ?? i.raw, i.sell ?? i.raw)));
+  let ymax = Math.max(0.01, ...items.map(i => Math.max(i.buy ?? i.raw, i.sell ?? i.raw)));
+  // add headroom and footroom (5%)
+  const ypad = (ymax - ymin) * 0.05 || 0.5;
+  ymin -= ypad; ymax += ypad;
   const x = makeScale(tmin, tmax, padL, W - padR);
   const y = makeScale(ymin, ymax, H - padB, padT);
   drawAxes(ctx, W, H, y(0));
 
-  // gridlines and Y labels
+  // gridlines and Y labels (consistent ticks)
   ctx.strokeStyle = 'rgba(255,255,255,.06)';
-  for (let g = 0; g <= 4; g++) {
-    const gy = y(ymin + (ymax - ymin) * g / 4);
+  const yTicks = 5; // 5 intervals, 6 gridlines
+  for (let g = 0; g <= yTicks; g++) {
+    const val = ymin + (ymax - ymin) * g / yTicks;
+    const gy = y(val);
     ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(W - padR, gy); ctx.stroke();
     ctx.fillStyle = 'rgba(255,255,255,.6)';
     ctx.font = '12px system-ui, sans-serif';
     ctx.textAlign = 'right';
-    ctx.fillText((ymin + (ymax - ymin) * g / 4).toFixed(2), padL - 6, gy + 4);
+    ctx.fillText('€' + val.toFixed(2), padL - 6, gy + 4);
   }
 
   function drawLine(key, color) {
@@ -430,16 +548,8 @@ function drawPriceChart(canvas, prices) {
   drawLine('buy', '#ef4444');
   drawLine('sell', '#84cc16');
 
-  // X-axis hour ticks
-  ctx.fillStyle = 'rgba(255,255,255,.6)';
-  ctx.textAlign = 'center';
-  for (let i = 0; i < items.length; i++) {
-    if (i % 2) continue;
-    const tt = new Date(items[i].t).getTime();
-    const tx = x(tt);
-    const label = new Date(tt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-    ctx.fillText(label, tx, H - 8);
-  }
+  // Shared hour ticks
+  drawHourTicks(ctx, x, tmin, tmax, H, padL, padR);
 
   // legend
   const legend = $('#legend-prices');
@@ -460,24 +570,38 @@ function drawPriceChart(canvas, prices) {
     }
     if (!nearest || best > 30) return null;
     const tt = new Date(nearest.t);
+    const tx = x(new Date(nearest.t).getTime());
+    const band = document.getElementById('chart-hoverband');
+    if (band) {
+      const rect = canvas.getBoundingClientRect();
+      const hourW = Math.abs(x(tt.getTime()+3600_000) - x(tt.getTime()));
+      band.style.left = `${rect.left + tx - hourW/2}px`;
+      band.style.top = `${rect.top + 10}px`;
+      band.style.width = `${hourW}px`;
+      band.style.height = `${H - 34}px`;
+      band.hidden = false;
+    }
+    const labelStart = tt.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
+    const labelEnd = new Date(tt.getTime()+3600_000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
     return {
-      x: x(new Date(nearest.t).getTime()),
+      x: tx,
       y: my,
-      html: `${tt.toLocaleString()}<br>Buy: <b>${(nearest.buy ?? nearest.raw).toFixed(3)}</b><br>Sell: <b>${(nearest.sell ?? nearest.raw).toFixed(3)}</b>`
+      html: `${labelStart}–${labelEnd}<br>Buy: <b>${(nearest.buy ?? nearest.raw).toFixed(3)}</b><br>Sell: <b>${(nearest.sell ?? nearest.raw).toFixed(3)}</b>`
     };
   });
 }
 
-function drawEnergyChart(canvas, plan) {
+function drawEnergyChart(canvas, plan, domainOverride) {
   if (!canvas) return;
   const { ctx, W, H } = clearCanvas(canvas);
   if (!ctx) return;
   const padL = 40, padB = 24, padT = 10, padR = 10;
 
-  const [tmin, tmax] = timeDomainFromPlan(plan);
+  let [tmin, tmax] = timeDomainFromPlan(plan);
+  if (domainOverride) { tmin = domainOverride[0]; tmax = domainOverride[1]; }
   const x = makeScale(tmin, tmax, padL, W - padR);
-  const ymin = -1; // dynamic below
-  const ymax = 1;
+  let ymin = -1; // dynamic below
+  let ymax = 1;
 
   // Build stacked series per slot using annotated energy flows from the plan
   const slotSecs = plan.planning_window_seconds || 900;
@@ -508,11 +632,25 @@ function drawEnergyChart(canvas, plan) {
 
   const vmax = Math.max(0.01, ...bars.map(b => streams.reduce((acc, st) => acc + (st.sign > 0 ? b[st.key] : 0), 0)));
   const vmin = -Math.max(0.01, ...bars.map(b => streams.reduce((acc, st) => acc + (st.sign < 0 ? b[st.key] : 0), 0)));
-  const y = makeScale(vmin, vmax, H - padB, padT);
+  // add head/foot room
+  const ypadE = (vmax - vmin) * 0.05 || 0.05;
+  const yMinE = vmin - ypadE;
+  const yMaxE = vmax + ypadE;
+  const y = makeScale(yMinE, yMaxE, H - padB, padT);
   drawAxes(ctx, W, H, y(0));
+  // Y-axis labels
+  ctx.fillStyle = 'rgba(255,255,255,.7)';
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.textAlign = 'right';
+  const yTicks = 4;
+  for (let g = 0; g <= yTicks; g++) {
+    const val = vmin + (vmax - vmin) * g / yTicks;
+    const gy = y(val);
+    ctx.fillText(val.toFixed(2) + ' kWh', 34, gy + 4);
+  }
 
-  // bar width
-  const barW = Math.max(2, (W - padL - padR) / bars.length - 2);
+  const slotMs = (plan.planning_window_seconds || 900) * 1000;
+  const barW = Math.max(2, x(tmin + slotMs) - x(tmin) - 2);
 
   // draw stacked bars
   const now = Date.now();
@@ -524,7 +662,7 @@ function drawEnergyChart(canvas, plan) {
     streams.filter(s => s.sign > 0).forEach(st => {
       const h = y(0) - y(b[st.key]);
       if (h <= 0) return;
-      ctx.fillStyle = predicted ? getStripePattern(ctx, st.color) : st.color; ctx.globalAlpha = 0.9;
+      ctx.fillStyle = st.color; ctx.globalAlpha = predicted ? 0.5 : 0.9;
       ctx.fillRect(cx, yPos - h, barW, h);
       yPos -= h;
     });
@@ -533,7 +671,7 @@ function drawEnergyChart(canvas, plan) {
     streams.filter(s => s.sign < 0).forEach(st => {
       const h = y(-b[st.key]) - y(0);
       if (h <= 0) return;
-      ctx.fillStyle = predicted ? getStripePattern(ctx, st.color) : st.color; ctx.globalAlpha = 0.9;
+      ctx.fillStyle = st.color; ctx.globalAlpha = predicted ? 0.5 : 0.9;
       ctx.fillRect(cx, yPos, barW, h);
       yPos += h;
     });
@@ -550,15 +688,8 @@ function drawEnergyChart(canvas, plan) {
     <div class="key"><span class="swatch" style="background:#ec4899"></span> From grid to battery</div>
   `;
 
-  // X-axis labels
-  ctx.fillStyle = 'rgba(255,255,255,.6)';
-  ctx.textAlign = 'center';
-  for (let i = 0; i < bars.length; i++) {
-    if (i % 2) continue;
-    const tx = x(bars[i].t);
-    const label = new Date(bars[i].t).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-    ctx.fillText(label, tx + barW/2, H - 8);
-  }
+  // Shared hour ticks
+  drawHourTicks(ctx, x, tmin, tmax, H, padL, padR);
 
   // Hover tooltip (stacked totals)
   attachHover(canvas, (mx, my) => {
@@ -567,6 +698,19 @@ function drawEnergyChart(canvas, plan) {
     const b = bars[idx];
     if (!b) return null;
     const t = new Date(b.t);
+    // hover band
+    const band = document.getElementById('chart-hoverband');
+    if (band) {
+      const rect = canvas.getBoundingClientRect();
+      const barSpace = (W - padL - padR) / bars.length;
+      band.style.left = `${rect.left + padL + idx * barSpace}px`;
+      band.style.top = `${rect.top + 10}px`;
+      band.style.width = `${barSpace}px`;
+      band.style.height = `${H - 34}px`;
+      band.hidden = false;
+    }
+    const labelStart = t.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
+    const labelEnd = new Date(b.t + (slotSecs*1000)).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
     const lines = [
       `From battery to grid: <b>${(b.batt_grid).toFixed(3)} kWh</b>`,
       `From solar to grid: <b>${(b.solar_grid).toFixed(3)} kWh</b>`,
@@ -579,12 +723,12 @@ function drawEnergyChart(canvas, plan) {
     return {
       x: x(b.t) + barW/2,
       y: my,
-      html: `${t.toLocaleString()}<br>${lines.join('<br>')}`
+      html: `${labelStart}–${labelEnd}<br>${lines.join('<br>')}`
     };
   });
 }
 
-function drawCostsChart(canvas, plan, prices) {
+function drawCostsChart(canvas, plan, prices, domainOverride) {
   if (!canvas) return;
   const { ctx, W, H } = clearCanvas(canvas);
   if (!ctx) return;
@@ -622,16 +766,28 @@ function drawCostsChart(canvas, plan, prices) {
     }
     return { t: new Date(s.start).getTime(), gridCost, gridSave, battCost };
   });
+  let tmin = bars.length ? bars[0].t : Date.now();
+  let tmax = bars.length ? bars[bars.length-1].t + slotSecs*1000 : tmin + 3600_000;
+  if (domainOverride) { tmin = domainOverride[0]; tmax = domainOverride[1]; }
 
-  const tmin = bars.length ? bars[0].t : Date.now();
-  const tmax = bars.length ? bars[bars.length-1].t + slotSecs*1000 : tmin + 3600_000;
   const vmax = Math.max(0.01, ...bars.map(b => b.gridSave));
   const vmin = -Math.max(0.01, ...bars.map(b => Math.max(b.gridCost, b.battCost)));
   const x = makeScale(tmin, tmax, padL, W - padR);
-  const y = makeScale(vmin, vmax, H - padB, padT);
+  const ypadC = (vmax - vmin) * 0.05 || 0.05;
+  const y = makeScale(vmin - ypadC, vmax + ypadC, H - padB, padT);
   drawAxes(ctx, W, H, y(0));
+  // Y-axis labels with extra grid line
+  ctx.fillStyle = 'rgba(255,255,255,.7)';
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.textAlign = 'right';
+  const yTicks2 = 5;
+  for (let g = 0; g <= yTicks2; g++) {
+    const val = (vmin - ypadC) + ((vmax - vmin + 2*ypadC) * g / yTicks2);
+    const gy = y(val);
+    ctx.fillText('€' + val.toFixed(2), 34, gy + 4);
+  }
 
-  const barW = Math.max(2, (W - padL - padR) / bars.length - 4);
+  const barW = Math.max(2, x(tmin + slotSecs*1000) - x(tmin) - 4);
   const now = Date.now();
   bars.forEach(b => {
     const cx = x(b.t) + 2;
@@ -641,14 +797,14 @@ function drawCostsChart(canvas, plan, prices) {
     const drawNeg = (val, color) => {
       const h = y(-val) - y(0);
       if (h <= 0) return;
-      ctx.fillStyle = predicted ? getStripePattern(ctx, color) : color; ctx.globalAlpha = 0.9; ctx.fillRect(cx, y0, barW, h);
+      ctx.fillStyle = color; ctx.globalAlpha = predicted ? 0.5 : 0.9; ctx.fillRect(cx, y0, barW, h);
       y0 += h;
     };
     drawNeg(b.gridCost, '#ef4444');
     drawNeg(b.battCost, '#60a5fa');
     // positive bar
     const hp = y(0) - y(b.gridSave);
-    if (hp > 0) { ctx.fillStyle = predicted ? getStripePattern(ctx, '#84cc16') : '#84cc16'; ctx.globalAlpha = 0.9; ctx.fillRect(cx, y(0) - hp, barW, hp); }
+    if (hp > 0) { ctx.fillStyle = '#84cc16'; ctx.globalAlpha = predicted ? 0.5 : 0.9; ctx.fillRect(cx, y(0) - hp, barW, hp); }
   });
 
   const legend = $('#legend-costs');
@@ -658,15 +814,8 @@ function drawCostsChart(canvas, plan, prices) {
     <div class=\"key\"><span class=\"swatch\" style=\"background:#60a5fa\"></span> Battery costs</div>
   `;
 
-  // X-axis labels
-  ctx.fillStyle = 'rgba(255,255,255,.6)';
-  ctx.textAlign = 'center';
-  for (let i = 0; i < bars.length; i++) {
-    if (i % 2) continue;
-    const tx = x(bars[i].t);
-    const label = new Date(bars[i].t).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-    ctx.fillText(label, tx + barW/2, H - 8);
-  }
+  // Shared hour ticks
+  drawHourTicks(ctx, x, tmin, tmax, H, padL, padR);
 
   // Hover tooltip
   attachHover(canvas, (mx, my) => {
@@ -674,10 +823,22 @@ function drawCostsChart(canvas, plan, prices) {
     const b = bars[idx];
     if (!b) return null;
     const t = new Date(b.t);
+    const band = document.getElementById('chart-hoverband');
+    if (band) {
+      const rect = canvas.getBoundingClientRect();
+      const barSpace = (W - padL - padR) / bars.length;
+      band.style.left = `${rect.left + padL + idx * barSpace}px`;
+      band.style.top = `${rect.top + 10}px`;
+      band.style.width = `${barSpace}px`;
+      band.style.height = `${H - 34}px`;
+      band.hidden = false;
+    }
+    const labelStart = t.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
+    const labelEnd = new Date(b.t + slotSecs*1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
     return {
       x: x(b.t) + barW/2,
       y: my,
-      html: `${t.toLocaleString()}<br>Grid cost: <b>€${b.gridCost.toFixed(2)}</b><br>Grid savings: <b>€${b.gridSave.toFixed(2)}</b><br>Battery cost: <b>€${b.battCost.toFixed(2)}</b>`
+      html: `${labelStart}–${labelEnd}<br>Grid cost: <b>€${b.gridCost.toFixed(2)}</b><br>Grid savings: <b>€${b.gridSave.toFixed(2)}</b><br>Battery cost: <b>€${b.battCost.toFixed(2)}</b>`
     };
   });
 }
@@ -686,6 +847,7 @@ function drawCostsChart(canvas, plan, prices) {
 function attachHover(canvas, compute) {
   if (!canvas) return;
   const tip = document.getElementById('chart-tooltip');
+  const band = document.getElementById('chart-hoverband');
   if (!tip) return;
   let over = false;
   const show = (evt) => {
@@ -700,6 +862,6 @@ function attachHover(canvas, compute) {
     tip.hidden = false;
   };
   canvas.addEventListener('mousemove', show);
-  canvas.addEventListener('mouseleave', () => { tip.hidden = true; });
+  canvas.addEventListener('mouseleave', () => { tip.hidden = true; if (band) band.hidden = true; });
 }
 

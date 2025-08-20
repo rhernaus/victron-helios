@@ -26,8 +26,15 @@ class Planner:
 
         # Build time slices
         slots: list[PlanSlot] = []
-        start = now
-        end = now + timedelta(hours=horizon_hours)
+        # Align planning windows to hour boundaries when the window evenly divides an hour
+        hour_start = now.replace(minute=0, second=0, microsecond=0)
+        if 3600 % window == 0:
+            # e.g., 900s (15 min) windows should begin at the top of the hour
+            start = hour_start
+            end = hour_start + timedelta(hours=horizon_hours)
+        else:
+            start = now
+            end = now + timedelta(hours=horizon_hours)
 
         # Compute a simple price threshold using median
         prices = [p for _, p in price_series]

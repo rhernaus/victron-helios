@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Optional
 
 
@@ -49,6 +50,16 @@ class DbusTelemetryReader(TelemetryReader):  # pragma: no cover - hardware speci
         except Exception:
             return None
 
+    def _sum_phases(self, bus, service: str, base: str) -> int | float | None:  # type: ignore[no-untyped-def]
+        total = 0.0
+        found = False
+        for phase in ("L1", "L2", "L3"):
+            v = self._read_value(bus, service, f"{base}/{phase}/Power")
+            if isinstance(v, (int, float)):
+                total += float(v)
+                found = True
+        return int(total) if found else None
+
     def read(self) -> TelemetrySnapshot:  # type: ignore[override]
         try:
             import dbus  # type: ignore
@@ -63,47 +74,60 @@ class DbusTelemetryReader(TelemetryReader):  # pragma: no cover - hardware speci
             if isinstance(soc, (int, float)):
                 snap.soc_percent = float(soc)
 
-            # Load (W): /Ac/Consumption/Power
-            load = self._read_value(bus, system_service, "/Ac/Consumption/Power")
+            # Load (W): prefer 3ph sum, fall back to aggregate path
+            load = self._sum_phases(bus, system_service, "/Ac/Consumption")
+            if load is None:
+                load = self._read_value(bus, system_service, "/Ac/Consumption/Power")
             if isinstance(load, (int, float)):
                 snap.load_w = int(load)
 
-            # Solar (W): aggregate AC PV and DC PV if available
-            pv_ac = self._read_value(bus, system_service, "/Ac/PvOnGrid/Power")
+            # Solar (W): sum AC PV on output and on grid phases; include DC PV
+            pv_out = self._sum_phases(bus, system_service, "/Ac/PvOnOutput")
+            pv_grid = self._sum_phases(bus, system_service, "/Ac/PvOnGrid")
             pv_dc = self._read_value(bus, system_service, "/Dc/Pv/Power")
-            total_pv = 0
-            if isinstance(pv_ac, (int, float)):
-                total_pv += int(pv_ac)
-            if isinstance(pv_dc, (int, float)):
-                total_pv += int(pv_dc)
-            snap.solar_w = total_pv if total_pv != 0 else None
+            total_pv = 0.0
+            for v in (pv_out, pv_grid, pv_dc if isinstance(pv_dc, (int, float)) else None):
+                if isinstance(v, (int, float)):
+                    total_pv += float(v)
+            snap.solar_w = int(total_pv) if total_pv else None
 
-            # EV Charger: any evcharger service
+            # EV Charger: detect any service under com.victronenergy.evcharger.*
             try:
                 names = bus.list_names()
             except Exception:
                 names = []
             ev_status: dict = {}
             for name in names:
-                if not str(name).startswith("com.victronenergy.evcharger"):
+                if not str(name).startswith("com.victronenergy.evcharger."):
                     continue
-                fields = [
+                # read a superset of common fields; tolerate device-specific variants
+                candidates = [
                     "/Mode",
-                    "/State",
-                    "/Enabled",
+                    "/Status",  # common on evchargers
+                    "/State",  # some models
+                    "/StartStop",
                     "/Connected",
                     "/Charging",
+                    "/Ac/Power",
                     "/Power",
+                    "/Ac/Current",
                     "/Current",
+                    "/SetCurrent",
+                    "/MaxCurrent",
+                    "/ChargingTime",
+                    "/ProductName",
+                    "/FirmwareVersion",
+                    "/Serial",
                 ]
-                for p in fields:
+                for p in candidates:
                     val = self._read_value(bus, name, p)
-                    if val is not None:
+                    if val is not None and val != []:
                         ev_status[p] = val
                 if ev_status:
                     break
             snap.ev_status = ev_status or None
             return snap
-        except Exception:
+        except Exception as exc:
             # If dbus not available or any failure, return empty snapshot
+            logging.getLogger("helios.telemetry").warning("DBus telemetry read failed: %s", exc)
             return TelemetrySnapshot()
