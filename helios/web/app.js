@@ -84,13 +84,14 @@ async function refreshPlan() {
     // Also fetch price series for graphs for current domain
     let priceData = null;
     let metersData = null;
-    try {
-      const domain = computeGlobalDomain(p, window.__lastPrices);
-      const qs = domain ? `?from=${Math.floor(domain[0]/1000)}&to=${Math.floor(domain[1]/1000)}` : '';
-      priceData = await api('/prices' + qs);
-      // Fetch meters dataset with 1-minute resolution
-      metersData = await api('/meters/series' + qs + '&resolution_seconds=60');
-    } catch (_) { priceData = null; }
+    const domain = computeGlobalDomain(p, window.__lastPrices);
+    const qs = domain ? `?from=${Math.floor(domain[0]/1000)}&to=${Math.floor(domain[1]/1000)}` : '';
+    const [priceRes, metersRes] = await Promise.allSettled([
+      api('/prices' + qs),
+      api('/meters/series' + (qs ? qs + '&' : '?') + 'resolution_seconds=60'),
+    ]);
+    priceData = (priceRes.status === 'fulfilled') ? priceRes.value : null;
+    metersData = (metersRes.status === 'fulfilled') ? metersRes.value : null;
     const now = Date.now();
     if ($('#plan-summary')) $('#plan-summary').textContent = p.summary || '—';
     container.innerHTML = '';
@@ -314,7 +315,7 @@ function init() {
       const qs = domain ? `?from=${Math.floor(domain[0]/1000)}&to=${Math.floor(domain[1]/1000)}` : '';
       Promise.all([
         api('/prices' + qs).catch(() => window.__lastPrices),
-        api('/meters/series' + qs + '&resolution_seconds=60').catch(() => window.__lastMeters),
+        api('/meters/series' + (qs ? qs + '&' : '?') + 'resolution_seconds=60').catch(() => window.__lastMeters),
       ]).then(([pd, md]) => { window.__lastPrices = pd; window.__lastMeters = md; renderCharts(p, pd, md); })
         .catch(() => { try { renderCharts(p, window.__lastPrices, window.__lastMeters); } catch(_) {} });
     });
@@ -328,7 +329,7 @@ function init() {
         const qs = domain ? `?from=${Math.floor(domain[0]/1000)}&to=${Math.floor(domain[1]/1000)}` : '';
         Promise.all([
           api('/prices' + qs).catch(() => window.__lastPrices),
-          api('/meters/series' + qs + '&resolution_seconds=60').catch(() => window.__lastMeters),
+          api('/meters/series' + (qs ? qs + '&' : '?') + 'resolution_seconds=60').catch(() => window.__lastMeters),
         ]).then(([pd, md]) => { window.__lastPrices = pd; window.__lastMeters = md; renderCharts(p, pd, md); })
           .catch(() => { try { renderCharts(p, window.__lastPrices, window.__lastMeters); } catch(_) {} });
       });
