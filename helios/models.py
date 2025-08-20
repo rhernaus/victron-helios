@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -43,7 +44,7 @@ class Plan(BaseModel):
     slots: list[PlanSlot] = Field(default_factory=list)
     summary: str | None = Field(default=None, description="High-level plan summary")
 
-    def slot_for(self, at: datetime) -> PlanSlot | None:
+    def slot_for(self, at: datetime) -> Optional[PlanSlot]:
         for slot in self.slots:
             if slot.start <= at < slot.end:
                 return slot
@@ -52,8 +53,8 @@ class Plan(BaseModel):
 
 class StatusResponse(BaseModel):
     automation_paused: bool
-    last_recalc_at: datetime | None
-    last_control_at: datetime | None
+    last_recalc_at: Optional[datetime]
+    last_control_at: Optional[datetime]
     current_action: Action | None = None
     current_setpoint_w: int | None = None
     current_reason: str | None = None

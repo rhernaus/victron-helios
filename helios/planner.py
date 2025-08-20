@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from statistics import median
+from typing import Optional
 
 from .config import HeliosSettings
 from .models import Action, Plan, PlanSlot
@@ -14,9 +15,9 @@ class Planner:
     def build_plan(
         self,
         price_series: list[tuple[datetime, float]],
-        now: datetime | None = None,
-        solar_forecast: list[tuple[datetime, float]] | None = None,
-        load_forecast: list[tuple[datetime, float]] | None = None,
+        now: Optional[datetime] = None,
+        solar_forecast: Optional[list[tuple[datetime, float]]] = None,
+        load_forecast: Optional[list[tuple[datetime, float]]] = None,
     ) -> Plan:
         now = now or datetime.now(timezone.utc)
         window = self.settings.planning_window_seconds
@@ -170,7 +171,7 @@ class Planner:
             slot.solar_to_battery_kwh = remainder
 
     @staticmethod
-    def _value_at(series: list[tuple[datetime, float]] | None, at: datetime) -> float | None:
+    def _value_at(series: Optional[list[tuple[datetime, float]]], at: datetime) -> Optional[float]:
         if not series:
             return None
         closest = min(series, key=lambda p: abs((p[0] - at).total_seconds()))
@@ -259,7 +260,7 @@ class Planner:
         return "idle: price within hysteresis or constrained"
 
     @staticmethod
-    def _price_at(series: list[tuple[datetime, float]], at: datetime) -> float | None:
+    def _price_at(series: list[tuple[datetime, float]], at: datetime) -> Optional[float]:
         if not series:
             return None
         # series assumed hourly; pick closest

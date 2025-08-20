@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+from typing import Optional
 
 
 @dataclass
 class TelemetrySnapshot:
-    soc_percent: float | None = None
-    load_w: int | None = None
-    solar_w: int | None = None
-    ev_status: dict | None = None
+    soc_percent: Optional[float] = None
+    load_w: Optional[int] = None
+    solar_w: Optional[int] = None
+    ev_status: Optional[dict] = None
 
 
 class TelemetryReader:
