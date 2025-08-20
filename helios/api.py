@@ -81,6 +81,42 @@ def _select_forecast_provider(settings: HeliosSettings) -> ForecastProvider:
     return StubForecastProvider(peak_watts=float(settings.pv_peak_watts or 4000.0))
 
 
+def _warn_if_backend_missing_deps(settings: HeliosSettings) -> None:
+    """Log clear warnings if a selected backend depends on modules that are not importable.
+
+    Today this checks for dbus-python when executor or telemetry backends are set to 'dbus'.
+    """
+    # dbus for executor
+    try:
+        if settings.executor_backend == "dbus":  # pragma: no cover - environment dependent
+            import importlib.util as _util
+
+            if _util.find_spec("dbus") is None:
+                raise ImportError("dbus module not found")
+    except Exception as exc:
+        logger.warning(
+            "Executor backend 'dbus' selected but 'dbus' module is not importable: %s. "
+            "If running inside a virtual environment on Venus OS, recreate the venv with "
+            "--system-site-packages so the system 'dbus-python' is visible.",
+            exc,
+        )
+
+    # dbus for telemetry
+    try:
+        if getattr(settings, "telemetry_backend", "noop") == "dbus":  # pragma: no cover
+            import importlib.util as _util
+
+            if _util.find_spec("dbus") is None:
+                raise ImportError("dbus module not found")
+    except Exception as exc:
+        logger.warning(
+            "Telemetry backend 'dbus' selected but 'dbus' module is not importable: %s. "
+            "If running inside a virtual environment on Venus OS, recreate the venv with "
+            "--system-site-packages so the system 'dbus-python' is visible.",
+            exc,
+        )
+
+
 def _recalc_plan(state: HeliosState) -> None:
     # Retrieve price curve using provider abstraction
     now = datetime.now(timezone.utc)
@@ -287,6 +323,11 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
 
     @app.on_event("startup")
     def on_startup() -> None:
+        # Proactively warn about missing optional dependencies for selected backends
+        try:
+            _warn_if_backend_missing_deps(state.settings)
+        except Exception as exc:
+            logger.debug("Backend dependency diagnostics failed: %s", exc)
         scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
         scheduler.start(recalc_job=recalc_job, control_job=control_job, telemetry_job=telemetry_job)
         # trigger immediate first plan
@@ -486,6 +527,11 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
                     state.price_provider = desired_provider
                 # swap telemetry reader
                 state.telemetry_reader = _select_telemetry_reader(new_settings)
+                # Warn if selected backends require missing dependencies
+                try:
+                    _warn_if_backend_missing_deps(new_settings)
+                except Exception as exc:
+                    logger.debug("Backend dependency diagnostics failed: %s", exc)
                 # reschedule with new intervals
                 scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
                 scheduler.reschedule(
