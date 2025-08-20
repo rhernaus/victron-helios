@@ -42,6 +42,11 @@ except Exception:  # pragma: no cover - optional
 
 logger = logging.getLogger("helios")
 
+# Module-level Query defaults to satisfy lint rule B008
+FROM_Q = Query(default=None, alias="from")
+TO_Q = Query(default=None, alias="to")
+RES_Q = Query(default=60, ge=30, le=3600)
+
 
 def _select_price_provider(settings: HeliosSettings) -> PriceProvider:
     if settings.price_provider == "tibber" and settings.tibber_token:
@@ -321,6 +326,138 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
             # Keep last snapshot but record the failure for diagnostics
             logger.warning("Telemetry read failed: %s", exc)
 
+    def counters_job():  # pragma: no cover - hardware and sqlite specific
+        """Collect cumulative energy counters from D-Bus and persist to SQLite.
+
+        Metrics captured (best-effort; missing services are skipped):
+          - grid_import_wh (Forward)
+          - grid_export_wh (Reverse)
+          - solar_prod_wh (sum of AC PV on output+grid and DC PV)
+          - load_consumption_wh (house consumption)
+          - ev_delivered_wh (per EV charger; aggregated into 'ev_total' too)
+        """
+        try:
+            import dbus  # type: ignore
+
+            def read_value(bus, service: str, path: str):
+                try:
+                    proxy = bus.get_object(service, path)
+                    props = dbus.Interface(proxy, dbus_interface="org.freedesktop.DBus.Properties")
+                    val = props.Get("com.victronenergy.BusItem", "Value")  # type: ignore[attr-defined]
+                    try:
+                        return float(val)
+                    except Exception:
+                        return None
+                except Exception:
+                    return None
+
+            bus = dbus.SystemBus()
+            now_ts = int(datetime.now(timezone.utc).timestamp())
+            ts_minute = (now_ts // 60) * 60
+
+            counters: list[tuple[str, str, int, int]] = []  # (metric, source, ts, value_wh)
+
+            # Grid import/export (kWh -> Wh)
+            grid_fwd = read_value(
+                bus, "com.victronenergy.system", "/Ac/Grid/Energy/Forward"
+            ) or read_value(bus, "com.victronenergy.grid", "/Ac/Energy/Forward")
+            grid_rev = read_value(
+                bus, "com.victronenergy.system", "/Ac/Grid/Energy/Reverse"
+            ) or read_value(bus, "com.victronenergy.grid", "/Ac/Energy/Reverse")
+            if isinstance(grid_fwd, (int, float)):
+                counters.append(("grid_import", "system", ts_minute, int(round(grid_fwd * 1000))))
+            if isinstance(grid_rev, (int, float)):
+                counters.append(("grid_export", "system", ts_minute, int(round(grid_rev * 1000))))
+
+            # Solar production: AC PV on output + on grid + DC PV
+            pv_out = read_value(bus, "com.victronenergy.system", "/Ac/PvOnOutput/Energy/Forward")
+            pv_grid = read_value(bus, "com.victronenergy.system", "/Ac/PvOnGrid/Energy/Forward")
+            pv_dc = read_value(bus, "com.victronenergy.system", "/Dc/Pv/Energy/Forward")
+            total_pv_kwh = 0.0
+            for v in (pv_out, pv_grid, pv_dc):
+                if isinstance(v, (int, float)):
+                    total_pv_kwh += float(v)
+            if total_pv_kwh > 0:
+                total_pv_wh = int(round(total_pv_kwh * 1000))
+                counters.append(("solar_production", "system", ts_minute, total_pv_wh))
+
+            # Load consumption (house): aggregated if available
+            load_fwd = read_value(bus, "com.victronenergy.system", "/Ac/Consumption/Energy/Forward")
+            if load_fwd is None:
+                # try per-phase sum
+                phases = []
+                for ph in (1, 2, 3):
+                    phases.append(
+                        read_value(
+                            bus,
+                            "com.victronenergy.system",
+                            f"/Ac/Consumption/L{ph}/Energy/Forward",
+                        )
+                    )
+                total = 0.0
+                found = False
+                for v in phases:
+                    if isinstance(v, (int, float)):
+                        total += float(v)
+                        found = True
+                load_fwd = total if found else None
+            if isinstance(load_fwd, (int, float)):
+                load_wh = int(round(load_fwd * 1000))
+                counters.append(("load_consumption", "system", ts_minute, load_wh))
+
+            # EV chargers: sum delivered energy per charger if present
+            try:
+                names = bus.list_names()
+            except Exception:
+                names = []
+            ev_total_kwh = 0.0
+            for name in names:
+                ns = str(name)
+                if not ns.startswith("com.victronenergy.evcharger."):
+                    continue
+                delivered = read_value(bus, ns, "/Ac/Energy/Forward")
+                if isinstance(delivered, (int, float)):
+                    ev_total_kwh += float(delivered)
+                    ev_wh = int(round(float(delivered) * 1000))
+                    counters.append(("ev_delivered", ns, ts_minute, ev_wh))
+            if ev_total_kwh > 0:
+                ev_total_wh = int(round(ev_total_kwh * 1000))
+                counters.append(("ev_delivered_total", "ev", ts_minute, ev_total_wh))
+
+            # Persist to SQLite
+            if sqlite3 is not None and counters:
+                try:
+                    db_path = Path(state.settings.data_dir) / "telemetry.db"
+                    db_path.parent.mkdir(parents=True, exist_ok=True)
+                    with closing(sqlite3.connect(str(db_path))) as conn:  # type: ignore[union-attr]
+                        conn.execute(
+                            "CREATE TABLE IF NOT EXISTS meter_counters ("
+                            "metric TEXT NOT NULL,"
+                            "source TEXT NOT NULL DEFAULT '',"
+                            "ts INTEGER NOT NULL,"
+                            "value_wh INTEGER NOT NULL,"
+                            "quality TEXT DEFAULT 'valid',"
+                            "PRIMARY KEY (metric, source, ts)"
+                            ")"
+                        )
+                        for metric, source, ts, val in counters:
+                            try:
+                                conn.execute(
+                                    (
+                                        "INSERT OR REPLACE INTO meter_counters("
+                                        "metric, source, ts, value_wh) "
+                                        "VALUES (?,?,?,?)"
+                                    ),
+                                    (metric, source, ts, int(val)),
+                                )
+                            except Exception as write_exc:
+                                logger.debug("Skipping counter row write: %s", write_exc)
+                        conn.commit()
+                except Exception as db_exc:
+                    logger.debug("Counters DB write failed: %s", db_exc)
+        except Exception as exc:
+            logger.debug("Counters collection failed: %s", exc)
+
     @app.on_event("startup")
     def on_startup() -> None:
         # Proactively warn about missing optional dependencies for selected backends
@@ -329,11 +466,24 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
         except Exception as exc:
             logger.debug("Backend dependency diagnostics failed: %s", exc)
         scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
-        scheduler.start(recalc_job=recalc_job, control_job=control_job, telemetry_job=telemetry_job)
+        scheduler.start(
+            recalc_job=recalc_job,
+            control_job=control_job,
+            telemetry_job=telemetry_job,
+            counters_job=counters_job,
+        )
         # trigger immediate first plan
         recalc_job()
         # prime telemetry once quickly
         telemetry_job()
+        # prime counters once quickly
+        try:
+            counters_job()
+        except Exception as exc:
+            logger.debug(
+                "Initial counters job run failed; continuing without counters prime: %s",
+                exc,
+            )
 
     @app.on_event("shutdown")
     def on_shutdown() -> None:
@@ -535,7 +685,10 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
                 # reschedule with new intervals
                 scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
                 scheduler.reschedule(
-                    recalc_job=recalc_job, control_job=control_job, telemetry_job=telemetry_job
+                    recalc_job=recalc_job,
+                    control_job=control_job,
+                    telemetry_job=telemetry_job,
+                    counters_job=counters_job,
                 )
                 # persist non-secret settings snapshot to disk
                 try:
@@ -717,6 +870,307 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
             )
 
         return {"generated_at": now.isoformat(), "start": start_dt.isoformat(), "items": items}
+
+    @app.get("/meters/series")
+    def meters_series(
+        from_: str | None = FROM_Q,
+        to: str | None = TO_Q,
+        resolution_seconds: int = RES_Q,
+    ) -> dict:  # pragma: no cover - exercised via UI
+        """Return combined historical meter deltas and forecast-derived series.
+
+        Historical portion uses cumulative counters from SQLite. Future portion uses
+        forecast provider (solar and load) to estimate flows, ignoring battery.
+        """
+
+        # Parse range
+        def _parse_ts(q: str | None) -> int | None:
+            if q is None:
+                return None
+            try:
+                v = int(q)
+                if v > 10**12:
+                    v = v // 1000
+                return v
+            except Exception:
+                try:
+                    dt = datetime.fromisoformat(q.replace("Z", "+00:00"))
+                    return int(dt.timestamp())
+                except Exception:
+                    return None
+
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        fr = _parse_ts(from_)
+        to_ts = _parse_ts(to)
+        if fr is None or to_ts is None or to_ts <= fr:
+            raise HTTPException(status_code=400, detail="invalid from/to range")
+
+        # Round to buckets
+        res = max(30, min(3600, int(resolution_seconds)))
+        bucket_start = (fr // res) * res
+        bucket_end = ((to_ts + res - 1) // res) * res
+
+        # Load historical counters from DB and compute deltas per bucket
+        hist_end = min(now_ts, bucket_end)
+        items_map: dict[int, dict] = {}
+        metrics = [
+            "grid_import",
+            "grid_export",
+            "solar_production",
+            "load_consumption",
+            "ev_delivered_total",
+        ]
+        if sqlite3 is not None and bucket_start < hist_end:
+            try:
+                db_path = Path(state.settings.data_dir) / "telemetry.db"
+                with closing(sqlite3.connect(str(db_path))) as conn:
+                    conn.row_factory = sqlite3.Row  # type: ignore[attr-defined]
+                    # Fetch rows for all metrics for [bucket_start - res, hist_end]
+                    query = (
+                        "SELECT metric, source, ts, value_wh FROM meter_counters "  # nosec B608
+                        "WHERE ts >= ? AND ts <= ? AND metric IN ("
+                        + ",".join(["?"] * len(metrics))
+                        + ") ORDER BY metric ASC, source ASC, ts ASC"
+                    )
+                    cur = conn.execute(query, (bucket_start - res, hist_end, *metrics))
+                    rows = list(cur)
+                # Group and compute deltas
+                from collections import defaultdict
+
+                series: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
+                for r in rows:
+                    series[(r["metric"], r["source"])].append((int(r["ts"]), int(r["value_wh"])))
+
+                def add_delta(metric_key: str, wh: int, ts: int) -> None:
+                    b = (ts // res) * res
+                    if b < bucket_start or b >= hist_end:
+                        return
+                    item = items_map.setdefault(
+                        b, {"t": datetime.fromtimestamp(b, tz=timezone.utc).isoformat()}
+                    )
+                    item[metric_key] = item.get(metric_key, 0) + wh
+
+                for (metric, _source), pairs in series.items():
+                    prev_val = None
+                    prev_ts = None
+                    for ts, val in pairs:
+                        if prev_val is not None and prev_ts is not None:
+                            delta = val - prev_val
+                            if delta < 0:
+                                # counter reset; skip this interval only
+                                prev_val = val
+                                prev_ts = ts
+                                continue
+                            add_delta(metric + "_wh", int(delta), ts)
+                        prev_val = val
+                        prev_ts = ts
+            except Exception as db_exc:
+                logger.debug("Meters history read failed: %s", db_exc)
+
+        # Convert historical WH to KWH and compute derived metrics
+        for ts in sorted(list(items_map.keys())):
+            obj = items_map[ts]
+            gi = float(obj.get("grid_import_wh", 0)) / 1000.0
+            ge = float(obj.get("grid_export_wh", 0)) / 1000.0
+            sp = float(obj.get("solar_production_wh", 0)) / 1000.0
+            lc = float(obj.get("load_consumption_wh", 0)) / 1000.0
+            ev = float(obj.get("ev_delivered_total_wh", 0)) / 1000.0
+            obj["grid_import_kwh"] = round(gi, 6)
+            obj["grid_export_kwh"] = round(ge, 6)
+            obj["solar_kwh"] = round(sp, 6)
+            obj["home_kwh"] = round(lc if lc > 0 else (gi + sp - ge), 6)
+            obj["ev_kwh"] = round(ev, 6)
+            # derived
+            home = obj["home_kwh"]
+            self_solar = max(0.0, min(sp, home))
+            obj["self_consumed_solar_kwh"] = round(self_solar, 6)
+            obj["self_sufficiency"] = round((self_solar / home) if home > 1e-9 else 0.0, 6)
+
+        # Forecast for future buckets
+        if bucket_end > now_ts:
+            with state.lock:
+                fp = state.forecast_provider or _select_forecast_provider(state.settings)
+            start_dt = datetime.fromtimestamp(max(now_ts, bucket_start), tz=timezone.utc)
+            end_dt = datetime.fromtimestamp(bucket_end, tz=timezone.utc)
+            try:
+                solar_fc = fp.get_solar_forecast(start_dt, end_dt) if fp else []
+            except Exception:
+                solar_fc = []
+            try:
+                load_fc = fp.get_load_forecast(start_dt, end_dt) if fp else []
+            except Exception:
+                load_fc = []
+
+            def value_at(series: list[tuple[datetime, float]], at: datetime) -> float:
+                if not series:
+                    return 0.0
+                closest = min(series, key=lambda p: abs((p[0] - at).total_seconds()))
+                return float(closest[1])
+
+            # Start from the next full bucket strictly after 'now' to avoid mixing
+            t = ((now_ts // res) * res) + res
+            while t < bucket_end:
+                dt = datetime.fromtimestamp(t, tz=timezone.utc)
+                solar_w = value_at(solar_fc, dt)
+                load_w = value_at(load_fc, dt)
+                kwh_solar = max(0.0, solar_w) * (res / 3600.0) / 1000.0
+                kwh_load = max(0.0, load_w) * (res / 3600.0) / 1000.0
+                imp = max(0.0, kwh_load - kwh_solar)
+                exp = max(0.0, kwh_solar - kwh_load)
+                obj = items_map.setdefault(
+                    t, {"t": datetime.fromtimestamp(t, tz=timezone.utc).isoformat()}
+                )
+                obj.setdefault("predicted", True)
+                obj["solar_kwh"] = round(float(obj.get("solar_kwh", 0.0)) + kwh_solar, 6)
+                obj["home_kwh"] = round(float(obj.get("home_kwh", 0.0)) + kwh_load, 6)
+                obj["grid_import_kwh"] = round(float(obj.get("grid_import_kwh", 0.0)) + imp, 6)
+                obj["grid_export_kwh"] = round(float(obj.get("grid_export_kwh", 0.0)) + exp, 6)
+                self_solar = max(0.0, min(obj["solar_kwh"], obj["home_kwh"]))
+                obj["self_consumed_solar_kwh"] = round(self_solar, 6)
+                obj["self_sufficiency"] = round(
+                    (self_solar / obj["home_kwh"]) if obj["home_kwh"] > 1e-9 else 0.0, 6
+                )
+                t += res
+
+        # Emit sorted items with only expected keys
+        keys = [
+            "t",
+            "grid_import_kwh",
+            "grid_export_kwh",
+            "solar_kwh",
+            "home_kwh",
+            "ev_kwh",
+            "self_consumed_solar_kwh",
+            "self_sufficiency",
+            "predicted",
+        ]
+        out: list[dict] = []
+        for ts in sorted(items_map.keys()):
+            obj = items_map[ts]
+            out.append({k: obj[k] for k in keys if k in obj})
+        return {"items": out, "resolution_seconds": res}
+
+    @app.get("/meters/daily")
+    def meters_daily(
+        from_: str | None = FROM_Q,
+        to: str | None = TO_Q,
+    ) -> dict:  # pragma: no cover - exercised via UI/tools
+        """Daily rollups from cumulative counters with derived metrics.
+
+        Response items are sorted by day (UTC) and include totals in kWh and self-sufficiency.
+        """
+
+        def _parse_ts(q: str | None) -> int | None:
+            if q is None:
+                return None
+            try:
+                v = int(q)
+                if v > 10**12:
+                    v = v // 1000
+                return v
+            except Exception:
+                try:
+                    dt = datetime.fromisoformat(q.replace("Z", "+00:00"))
+                    return int(dt.timestamp())
+                except Exception:
+                    return None
+
+        fr = _parse_ts(from_)
+        to_ts = _parse_ts(to)
+        if fr is None or to_ts is None or to_ts <= fr:
+            raise HTTPException(status_code=400, detail="invalid from/to range")
+
+        # Align to UTC midnights
+        start_day = datetime.fromtimestamp(fr, tz=timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        end_day = datetime.fromtimestamp(to_ts, tz=timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        end_inclusive = end_day + timedelta(days=1)
+        start_ts = int(start_day.timestamp())
+        end_ts = int(end_inclusive.timestamp())
+
+        metrics = [
+            "grid_import",
+            "grid_export",
+            "solar_production",
+            "load_consumption",
+            "ev_delivered_total",
+        ]
+        day_map: dict[str, dict] = {}
+        if sqlite3 is not None:
+            try:
+                db_path = Path(state.settings.data_dir) / "telemetry.db"
+                with closing(sqlite3.connect(str(db_path))) as conn:
+                    conn.row_factory = sqlite3.Row  # type: ignore[attr-defined]
+                    cur = conn.execute(
+                        (
+                            "SELECT metric, source, ts, value_wh FROM meter_counters "  # nosec B608
+                            "WHERE ts >= ? AND ts <= ? AND metric IN ("
+                            + ",".join(["?"] * len(metrics))
+                            + ") "
+                            "ORDER BY metric ASC, source ASC, ts ASC"
+                        ),
+                        (start_ts - 86400, end_ts) + tuple(metrics),
+                    )
+                    rows = list(cur)
+                from collections import defaultdict
+
+                series: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
+                for r in rows:
+                    series[(r["metric"], r["source"])].append((int(r["ts"]), int(r["value_wh"])))
+
+                def add_delta(day_key: str, metric_key: str, wh: int) -> None:
+                    obj = day_map.setdefault(day_key, {"day": day_key})
+                    obj[metric_key] = obj.get(metric_key, 0) + wh
+
+                for (metric, _source), pairs in series.items():
+                    prev_val = None
+                    for ts, val in pairs:
+                        if prev_val is not None:
+                            delta = val - prev_val
+                            if delta < 0:
+                                prev_val = val
+                                continue
+                            day_key = datetime.fromtimestamp(ts, tz=timezone.utc).strftime(
+                                "%Y-%m-%d"
+                            )
+                            add_delta(day_key, metric + "_wh", int(delta))
+                        prev_val = val
+            except Exception as db_exc:
+                logger.debug("Meters daily read failed: %s", db_exc)
+
+        # Convert to kWh and derive
+        out: list[dict] = []
+        for day_key in sorted(day_map.keys()):
+            obj = day_map[day_key]
+            gi = float(obj.get("grid_import_wh", 0)) / 1000.0
+            ge = float(obj.get("grid_export_wh", 0)) / 1000.0
+            sp = float(obj.get("solar_production_wh", 0)) / 1000.0
+            lc = float(obj.get("load_consumption_wh", 0)) / 1000.0
+            ev = float(obj.get("ev_delivered_total_wh", 0)) / 1000.0
+            home = lc if lc > 0 else (gi + sp - ge)
+            self_solar = max(0.0, min(sp, home))
+            out.append(
+                {
+                    "day": day_key,
+                    "grid_import_kwh": round(gi, 6),
+                    "grid_export_kwh": round(ge, 6),
+                    "solar_kwh": round(sp, 6),
+                    "home_kwh": round(home, 6),
+                    "ev_kwh": round(ev, 6),
+                    "self_consumed_solar_kwh": round(self_solar, 6),
+                    "self_sufficiency": round((self_solar / home) if home > 1e-9 else 0.0, 6),
+                }
+            )
+        # Filter to requested day range
+        out = [
+            o
+            for o in out
+            if start_day.strftime("%Y-%m-%d") <= o["day"] <= end_day.strftime("%Y-%m-%d")
+        ]
+        return {"items": out}
 
     @app.get("/export")
     def export_series() -> dict:

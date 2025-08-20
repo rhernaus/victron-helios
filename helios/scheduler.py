@@ -20,17 +20,19 @@ class HeliosScheduler:
         recalc_job: Callable[[], None],
         control_job: Callable[[], None],
         telemetry_job: Callable[[], None] | None = None,
+        counters_job: Callable[[], None] | None = None,
     ) -> None:
         # Listen for misfires to expose as metrics
         self.scheduler.add_listener(lambda event: scheduler_misfires_total.inc(), EVENT_JOB_MISSED)
         self.scheduler.start()
-        self._schedule_jobs(recalc_job, control_job, telemetry_job)
+        self._schedule_jobs(recalc_job, control_job, telemetry_job, counters_job)
 
     def _schedule_jobs(
         self,
         recalc_job: Callable[[], None],
         control_job: Callable[[], None],
         telemetry_job: Callable[[], None] | None,
+        counters_job: Callable[[], None] | None,
     ) -> None:
         settings = self.state.settings
         recalc_interval = settings.recalculation_interval_seconds
@@ -87,15 +89,32 @@ class HeliosScheduler:
                 max_instances=1,
                 misfire_grace_time=max(1, tel_interval),
             )
+        # Optional counters job
+        if counters_job is not None:
+            cnt_interval = max(5, self.state.settings.counters_update_interval_seconds)
+            cnt_jitter = min(max(0, cnt_interval // 10), 3, max(0, cnt_interval - 1))
+            self.scheduler.add_job(
+                counters_job,
+                IntervalTrigger(
+                    seconds=cnt_interval,
+                    jitter=cnt_jitter,
+                ),
+                id="counters",
+                replace_existing=True,
+                coalesce=True,
+                max_instances=1,
+                misfire_grace_time=max(1, cnt_interval),
+            )
 
     def reschedule(
         self,
         recalc_job: Callable[[], None],
         control_job: Callable[[], None],
         telemetry_job: Callable[[], None] | None = None,
+        counters_job: Callable[[], None] | None = None,
     ) -> None:
         self.scheduler.remove_all_jobs()
-        self._schedule_jobs(recalc_job, control_job, telemetry_job)
+        self._schedule_jobs(recalc_job, control_job, telemetry_job, counters_job)
 
     def shutdown(self) -> None:
         self.scheduler.shutdown(wait=False)

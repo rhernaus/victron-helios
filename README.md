@@ -25,6 +25,8 @@ Current endpoints:
 - `GET /prices`: current planning horizon prices (derived buy/sell)
 - `GET /export`: export current plan window with per-slot flows and costs
 - `GET /telemetry/history?limit=N`: recent telemetry samples from local store
+- `GET /meters/series?from=...&to=...&resolution_seconds=...`: historical meter deltas from D-Bus counters with forecast continuation
+- `GET /meters/daily?from=...&to=...`: daily rollups with derived self-sufficiency
 
 ### Configuration
 
@@ -33,6 +35,8 @@ Current endpoints:
   - `HELIOS_PLANNING_HORIZON_HOURS`: planning horizon hours (default 24, 1–48 allowed).
   - `HELIOS_RECALCULATION_INTERVAL_SECONDS`: plan refresh cadence (must be <= window).
   - `HELIOS_DBUS_UPDATE_INTERVAL_SECONDS`: control loop cadence.
+  - `HELIOS_TELEMETRY_UPDATE_INTERVAL_SECONDS`: live telemetry sampling cadence.
+  - `HELIOS_COUNTERS_UPDATE_INTERVAL_SECONDS`: D-Bus meter counters snapshot cadence (default 60s).
 - Provider selection:
   - `HELIOS_PRICE_PROVIDER`: `stub` (default) or `tibber`.
   - For Tibber: set `HELIOS_TIBBER_TOKEN` and optionally `HELIOS_TIBBER_HOME_ID`. The
@@ -128,9 +132,10 @@ uvicorn main:app --host 127.0.0.1 --port 8080 &
 - If you bind Uvicorn to all interfaces, you can browse: `http://<CERBO_IP>:8080/ui/`.
 - The UI provides:
   - Status and health
-  - Plan viewer with auto-refresh and three charts:
+  - Plan viewer with auto-refresh and four charts:
     - Energy prices (buy/sell) with time axis
     - Energy management (stacked flows: solar/battery/grid) with predicted vs realized styling
+    - Meters & forecasts (historical counters + forecast continuation)
     - Costs and savings (grid costs/savings and battery cost)
   - Hover tooltips show exact values on all charts
   - Configuration editor (quick fields and full key/value)
