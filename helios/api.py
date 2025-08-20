@@ -934,7 +934,8 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
                 closest = min(series, key=lambda p: abs((p[0] - at).total_seconds()))
                 return float(closest[1])
 
-            t = max(bucket_start, ((now_ts // res) * res))
+            # Start from the next full bucket strictly after 'now' to avoid mixing
+            t = ((now_ts // res) * res) + res
             while t < bucket_end:
                 dt = datetime.fromtimestamp(t, tz=timezone.utc)
                 solar_w = value_at(solar_fc, dt)
@@ -971,6 +972,108 @@ def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # no
             obj = items_map[ts]
             out.append({k: obj[k] for k in keys if k in obj})
         return {"items": out, "resolution_seconds": res}
+
+    @app.get("/meters/daily")
+    def meters_daily(
+        from_: Optional[str] = Query(default=None, alias="from"),
+        to: Optional[str] = Query(default=None, alias="to"),
+    ) -> dict:  # pragma: no cover - exercised via UI/tools
+        """Daily rollups from cumulative counters with derived metrics.
+
+        Response items are sorted by day (UTC) and include totals in kWh and self-sufficiency.
+        """
+        def _parse_ts(q: Optional[str]) -> Optional[int]:
+            if q is None:
+                return None
+            try:
+                v = int(q)
+                if v > 10**12:
+                    v = v // 1000
+                return v
+            except Exception:
+                try:
+                    dt = datetime.fromisoformat(q.replace("Z", "+00:00"))
+                    return int(dt.timestamp())
+                except Exception:
+                    return None
+
+        fr = _parse_ts(from_)
+        to_ts = _parse_ts(to)
+        if fr is None or to_ts is None or to_ts <= fr:
+            raise HTTPException(status_code=400, detail="invalid from/to range")
+
+        # Align to UTC midnights
+        start_day = datetime.fromtimestamp(fr, tz=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        end_day = datetime.fromtimestamp(to_ts, tz=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        end_inclusive = end_day + timedelta(days=1)
+        start_ts = int(start_day.timestamp())
+        end_ts = int(end_inclusive.timestamp())
+
+        metrics = ["grid_import", "grid_export", "solar_production", "load_consumption", "ev_delivered_total"]
+        day_map: dict[str, dict] = {}
+        if sqlite3 is not None:
+            try:
+                db_path = Path(state.settings.data_dir) / "telemetry.db"
+                with closing(sqlite3.connect(str(db_path))) as conn:
+                    conn.row_factory = sqlite3.Row  # type: ignore[attr-defined]
+                    cur = conn.execute(
+                        (
+                            "SELECT metric, source, ts, value_wh FROM meter_counters "
+                            "WHERE ts >= ? AND ts <= ? AND metric IN (" + ",".join(["?"] * len(metrics)) + ") "
+                            "ORDER BY metric ASC, source ASC, ts ASC"
+                        ),
+                        (start_ts - 86400, end_ts) + tuple(metrics),
+                    )
+                    rows = list(cur)
+                from collections import defaultdict
+                series: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
+                for r in rows:
+                    series[(r["metric"], r["source"])].append((int(r["ts"]), int(r["value_wh"])))
+
+                def add_delta(day_key: str, metric_key: str, wh: int) -> None:
+                    obj = day_map.setdefault(day_key, {"day": day_key})
+                    obj[metric_key] = obj.get(metric_key, 0) + wh
+
+                for (metric, source), pairs in series.items():
+                    prev_val = None
+                    for ts, val in pairs:
+                        if prev_val is not None:
+                            delta = val - prev_val
+                            if delta < 0:
+                                prev_val = val
+                                continue
+                            day_key = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+                            add_delta(day_key, metric + "_wh", int(delta))
+                        prev_val = val
+            except Exception as db_exc:
+                logger.debug("Meters daily read failed: %s", db_exc)
+
+        # Convert to kWh and derive
+        out: list[dict] = []
+        for day_key in sorted(day_map.keys()):
+            obj = day_map[day_key]
+            gi = float(obj.get("grid_import_wh", 0)) / 1000.0
+            ge = float(obj.get("grid_export_wh", 0)) / 1000.0
+            sp = float(obj.get("solar_production_wh", 0)) / 1000.0
+            lc = float(obj.get("load_consumption_wh", 0)) / 1000.0
+            ev = float(obj.get("ev_delivered_total_wh", 0)) / 1000.0
+            home = lc if lc > 0 else (gi + sp - ge)
+            self_solar = max(0.0, min(sp, home))
+            out.append(
+                {
+                    "day": day_key,
+                    "grid_import_kwh": round(gi, 6),
+                    "grid_export_kwh": round(ge, 6),
+                    "solar_kwh": round(sp, 6),
+                    "home_kwh": round(home, 6),
+                    "ev_kwh": round(ev, 6),
+                    "self_consumed_solar_kwh": round(self_solar, 6),
+                    "self_sufficiency": round((self_solar / home) if home > 1e-9 else 0.0, 6),
+                }
+            )
+        # Filter to requested day range
+        out = [o for o in out if start_day.strftime("%Y-%m-%d") <= o["day"] <= end_day.strftime("%Y-%m-%d")]
+        return {"items": out}
 
     @app.get("/export")
     def export_series() -> dict:

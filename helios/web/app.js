@@ -312,9 +312,11 @@ function init() {
       const p = window.__lastPlan;
       const domain = computeGlobalDomain(p, window.__lastPrices);
       const qs = domain ? `?from=${Math.floor(domain[0]/1000)}&to=${Math.floor(domain[1]/1000)}` : '';
-      api('/prices' + qs)
-        .then((pd) => { window.__lastPrices = pd; renderCharts(p, pd); })
-        .catch(() => { try { renderCharts(p, window.__lastPrices); } catch(_) {} });
+      Promise.all([
+        api('/prices' + qs).catch(() => window.__lastPrices),
+        api('/meters/series' + qs + '&resolution_seconds=60').catch(() => window.__lastMeters),
+      ]).then(([pd, md]) => { window.__lastPrices = pd; window.__lastMeters = md; renderCharts(p, pd, md); })
+        .catch(() => { try { renderCharts(p, window.__lastPrices, window.__lastMeters); } catch(_) {} });
     });
     if (applyBtn) {
       applyBtn.addEventListener('click', () => {
@@ -324,9 +326,11 @@ function init() {
         const p = window.__lastPlan;
         const domain = computeGlobalDomain(p, window.__lastPrices);
         const qs = domain ? `?from=${Math.floor(domain[0]/1000)}&to=${Math.floor(domain[1]/1000)}` : '';
-        api('/prices' + qs)
-          .then((pd) => { window.__lastPrices = pd; renderCharts(p, pd); })
-          .catch(() => { try { renderCharts(p, window.__lastPrices); } catch(_) {} });
+        Promise.all([
+          api('/prices' + qs).catch(() => window.__lastPrices),
+          api('/meters/series' + qs + '&resolution_seconds=60').catch(() => window.__lastMeters),
+        ]).then(([pd, md]) => { window.__lastPrices = pd; window.__lastMeters = md; renderCharts(p, pd, md); })
+          .catch(() => { try { renderCharts(p, window.__lastPrices, window.__lastMeters); } catch(_) {} });
       });
     }
   }
