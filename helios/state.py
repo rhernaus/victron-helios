@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from threading import RLock
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from .config import HeliosSettings
 from .dwell import DwellController
@@ -26,23 +26,23 @@ if TYPE_CHECKING:
 @dataclass
 class HeliosState:
     settings: HeliosSettings
-    scheduler: Optional[HeliosScheduler] = None
-    planner: Optional[Planner] = None
-    executor: Optional[Executor] = None
-    price_provider: Optional[PriceProvider] = None
-    forecast_provider: Optional[ForecastProvider] = None
-    telemetry_reader: Optional[TelemetryReader] = None
+    scheduler: HeliosScheduler | None = None
+    planner: Planner | None = None
+    executor: Executor | None = None
+    price_provider: PriceProvider | None = None
+    forecast_provider: ForecastProvider | None = None
+    telemetry_reader: TelemetryReader | None = None
 
-    latest_plan: Optional[Plan] = None
-    last_recalc_at: Optional[datetime] = None
-    last_control_at: Optional[datetime] = None
+    latest_plan: Plan | None = None
+    last_recalc_at: datetime | None = None
+    last_control_at: datetime | None = None
     automation_paused: bool = False
     last_telemetry: TelemetrySnapshot = field(default_factory=TelemetrySnapshot)
     lock: RLock = field(default_factory=RLock)
     dwell: DwellController = field(default_factory=lambda: DwellController(minimum_dwell_seconds=0))
 
 
-_global_state: Optional[HeliosState] = None
+_global_state: HeliosState | None = None
 
 
 def get_state() -> HeliosState:

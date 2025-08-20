@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 from .models import Action
 
@@ -10,8 +9,8 @@ from .models import Action
 @dataclass
 class DwellController:
     minimum_dwell_seconds: int = 0
-    last_action: Optional[Action] = None
-    last_action_at: Optional[datetime] = None
+    last_action: Action | None = None
+    last_action_at: datetime | None = None
     per_action_dwell_seconds: dict[Action, int] | None = None
 
     def should_change(self, new_action: Action, now: datetime) -> bool:

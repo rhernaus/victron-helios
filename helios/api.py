@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import logging
 from pathlib import Path
-from typing import Optional
+
 
 from fastapi import FastAPI, HTTPException, Response, Query
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -90,33 +90,32 @@ def _warn_if_backend_missing_deps(settings: HeliosSettings) -> None:
     # dbus for executor
     try:
         if settings.executor_backend == "dbus":  # pragma: no cover - environment dependent
-            try:
-                import dbus  # type: ignore
-            except Exception as exc:
-                logger.warning(
-                    "Executor backend 'dbus' selected but 'dbus' module is not importable: %s. "
-                    "If running inside a virtual environment on Venus OS, recreate the venv with "
-                    "--system-site-packages so the system 'dbus-python' is visible.",
-                    exc,
-                )
-    except Exception:
-        # Never break app startup on diagnostics
-        pass
+            import importlib.util as _util
+
+            if _util.find_spec("dbus") is None:
+                raise ImportError("dbus module not found")
+    except Exception as exc:
+        logger.warning(
+            "Executor backend 'dbus' selected but 'dbus' module is not importable: %s. "
+            "If running inside a virtual environment on Venus OS, recreate the venv with "
+            "--system-site-packages so the system 'dbus-python' is visible.",
+            exc,
+        )
 
     # dbus for telemetry
     try:
         if getattr(settings, "telemetry_backend", "noop") == "dbus":  # pragma: no cover
-            try:
-                import dbus  # type: ignore
-            except Exception as exc:
-                logger.warning(
-                    "Telemetry backend 'dbus' selected but 'dbus' module is not importable: %s. "
-                    "If running inside a virtual environment on Venus OS, recreate the venv with "
-                    "--system-site-packages so the system 'dbus-python' is visible.",
-                    exc,
-                )
-    except Exception:
-        pass
+            import importlib.util as _util
+
+            if _util.find_spec("dbus") is None:
+                raise ImportError("dbus module not found")
+    except Exception as exc:
+        logger.warning(
+            "Telemetry backend 'dbus' selected but 'dbus' module is not importable: %s. "
+            "If running inside a virtual environment on Venus OS, recreate the venv with "
+            "--system-site-packages so the system 'dbus-python' is visible.",
+            exc,
+        )
 
 
 def _recalc_plan(state: HeliosState) -> None:
@@ -209,7 +208,7 @@ def _do_control(state: HeliosState) -> None:
     control_ticks_total.inc()
 
 
-def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  # noqa: C901
+def create_app(initial_settings: HeliosSettings | None = None) -> FastAPI:  # noqa: C901
     app = FastAPI(default_response_class=JSONResponse)
 
     state = get_state()
@@ -328,8 +327,8 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
         # Proactively warn about missing optional dependencies for selected backends
         try:
             _warn_if_backend_missing_deps(state.settings)
-        except Exception:
-            pass
+        except Exception as diag_exc:
+            logger.debug("Backend dependency diagnostics failed: %s", diag_exc)
         scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
         scheduler.start(recalc_job=recalc_job, control_job=control_job, telemetry_job=telemetry_job)
         # trigger immediate first plan
@@ -409,15 +408,15 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
     @app.get("/telemetry/history")
     def telemetry_history(
         limit: int = 500,
-        from_: Optional[str] = Query(default=None, alias="from"),
-        to: Optional[str] = Query(default=None, alias="to"),
+        from_: str | None = Query(default=None, alias="from"),
+        to: str | None = Query(default=None, alias="to"),
     ) -> dict:
         """Return recent telemetry rows from the local SQLite store.
 
         This is a simple built-in time-series store to bootstrap forecasting.
         """
 
-        def _parse_ts(q: Optional[str]) -> Optional[int]:
+        def _parse_ts(q: str | None) -> int | None:
             if q is None:
                 return None
             try:
@@ -532,8 +531,8 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
                 # Warn if selected backends require missing dependencies
                 try:
                     _warn_if_backend_missing_deps(new_settings)
-                except Exception:
-                    pass
+                except Exception as diag_exc:
+                    logger.debug("Backend dependency diagnostics failed: %s", diag_exc)
                 # reschedule with new intervals
                 scheduler: HeliosScheduler = state.scheduler  # type: ignore[assignment]
                 scheduler.reschedule(
@@ -588,8 +587,8 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
 
     @app.get("/prices")
     def get_prices(
-        from_: Optional[str] = Query(default=None, alias="from"),
-        to: Optional[str] = Query(default=None, alias="to"),
+        from_: str | None = Query(default=None, alias="from"),
+        to: str | None = Query(default=None, alias="to"),
     ) -> dict:  # pragma: no cover - exercised via UI, not tests
         """Return the current planning horizon price series and derived buy/sell prices.
 
@@ -607,7 +606,7 @@ def create_app(initial_settings: Optional[HeliosSettings] = None) -> FastAPI:  #
         now = datetime.now(timezone.utc)
 
         # Parse optional range params (epoch seconds or ISO). Default to planning horizon
-        def _parse_ts(q: Optional[str]) -> Optional[int]:
+        def _parse_ts(q: str | None) -> int | None:
             if q is None:
                 return None
             try:
